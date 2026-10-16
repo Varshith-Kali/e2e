@@ -1,5 +1,11 @@
 # @e2e-dev/web
 
+## 0.15.3
+
+### Patch Changes
+
+- [#1022](https://github.com/tester-army/e2e/pull/1022) [`ff3bf39`](https://github.com/tester-army/e2e/commit/ff3bf3917f2b5bb0f81e5bc5f4fdaa24d023afd0) Thanks [@Bortlesboat](https://github.com/Bortlesboat)! - Allow `browser.waitForResponse` before the first `browser.goto` or `app.open`.
+
 ## 0.15.2
 
 ### Patch Changes
