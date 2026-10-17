@@ -125,10 +125,21 @@ export function createModelAdapter(model: ResolvedModel | undefined, agentName =
           }),
         });
         finished = result;
-        const output = result.output;
-        if (output === undefined) {
-          throw new ModelOutputInvalidError('provider returned no structured output');
+        // The SDK only parses `result.output` on a `stop` finish, or on a
+        // non-`tool-calls` finish with text. Otherwise the getter throws a bare
+        // `NoOutputGeneratedError` carrying no finish reason, text, or cause,
+        // so read them first: an `error` finish stays a provider failure, and
+        // anything else with nothing to parse is invalid output.
+        const finishReason = result.finishReason;
+        const rawText = result.text;
+        const hasParsedOutput = finishReason === 'stop' || (finishReason !== 'tool-calls' && rawText !== '');
+        if (!hasParsedOutput && finishReason !== 'error') {
+          throw new ModelOutputInvalidError(
+            `model returned no structured output (finish reason: ${result.rawFinishReason ?? finishReason})`,
+            rawText === '' ? {} : { rawText },
+          );
         }
+        const output = result.output;
         return { value: output, usage: readUsage(result, inputBound), reasoning: result.finalStep.reasoningText };
       } catch (cause) {
         throw translateModelError(cause, issue, call.signal, model, finished);
@@ -300,7 +311,7 @@ function translateModelError(
   model: Pick<ResolvedModel, 'provider' | 'id'>,
   finished: FinishedCall | undefined,
 ): Error {
-  const { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } = aiSdk();
+  const { APICallError, NoObjectGeneratedError } = aiSdk();
   const cause = unwrapRetry(rawCause);
   if (finished?.finishReason === 'content-filter') return modelRefusalError(model, finished.rawFinishReason, cause);
   if (cause instanceof AgentError) return cause;
@@ -317,16 +328,6 @@ function translateModelError(
     );
   }
   if (isModelRefusal(cause)) return modelRefusalError(model, undefined, cause);
-  // The SDK's no-output error comes from the `result.output` getter when the
-  // model produced nothing to parse (an empty `length` finish, say): the
-  // response failed the closed grammar, so it is invalid output — a test
-  // verdict with repair budget — not a provider outage.
-  if (NoOutputGeneratedError.isInstance(cause)) {
-    return new ModelOutputInvalidError(
-      issue ?? 'provider response did not match the closed response grammar',
-      { cause },
-    );
-  }
   if (NoObjectGeneratedError.isInstance(cause)) {
     return new ModelOutputInvalidError(
       issue ?? 'provider response did not match the closed response grammar',
