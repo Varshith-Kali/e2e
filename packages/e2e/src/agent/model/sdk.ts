@@ -101,6 +101,7 @@ export function createModelAdapter(model: ResolvedModel | undefined, agentName =
       try {
         if (schema === undefined) {
           const result = await generateText(settings);
+          throwIfModelRefused(result.finishReason, call.schemaName, model.id);
           const parsed = parseJsonObject(result.text);
           const validation = call.validate(parsed);
           if (!validation.ok) {
@@ -122,6 +123,10 @@ export function createModelAdapter(model: ResolvedModel | undefined, agentName =
             name: call.schemaName,
           }),
         });
+        // Before touching `result.output` (whose getter throws the SDK's
+        // no-output error): a refusal is `MODEL_REFUSED`, not a provider
+        // failure and not invalid output.
+        throwIfModelRefused(result.finishReason, call.schemaName, model.id);
         const output = result.output;
         if (output === undefined) {
           throw new ModelOutputInvalidError('provider returned no structured output');
@@ -258,6 +263,27 @@ function parseCost(raw: unknown): number | undefined {
 }
 
 /**
+ * A refusal the model reported instead of output: the request was denied by
+ * the provider's content policy, not failed by its transport. Retrying the
+ * same prompt is refused again, so this is the typed, non-retryable
+ * `MODEL_REFUSED` — never the retryable-looking `MODEL_PROVIDER_FAILED`,
+ * and never `MODEL_OUTPUT_INVALID`, which the invocation would spend a
+ * repair round on. The message names the step, the model, and the raw
+ * finish reason so the report reads as a refusal, not an outage.
+ */
+function throwIfModelRefused(
+  finishReason: string | undefined,
+  step: string,
+  modelId: string,
+): void {
+  if (finishReason !== 'content-filter') return;
+  throw new AgentError(
+    'MODEL_REFUSED',
+    `model refused to answer step '${step}' (model '${modelId}', finish reason 'content-filter'): rephrase the request — the same prompt will be refused again`,
+  );
+}
+
+/**
  * Maps adapter and provider failures onto the closed agent error set. Runs
  * only after `generate` loaded the SDK, so the cached module is available for
  * the error-class checks.
@@ -267,7 +293,7 @@ function translateModelError(
   issue: string | undefined,
   signal: AbortSignal,
 ): Error {
-  const { APICallError, NoObjectGeneratedError } = aiSdk();
+  const { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } = aiSdk();
   const cause = unwrapRetry(rawCause);
   if (cause instanceof AgentError) return cause;
   // Only an aborted attempt is a cancellation. A request that exceeded the
@@ -282,10 +308,17 @@ function translateModelError(
       { cause },
     );
   }
-  if (NoObjectGeneratedError.isInstance(cause)) {
+  // The SDK renamed this error in v7; the old name's `isInstance` misses the
+  // new class, which used to fall through to `MODEL_PROVIDER_FAILED`.
+  if (
+    (typeof NoOutputGeneratedError?.isInstance === 'function' &&
+      NoOutputGeneratedError.isInstance(cause)) ||
+    (typeof NoObjectGeneratedError?.isInstance === 'function' &&
+      NoObjectGeneratedError.isInstance(cause))
+  ) {
     return new ModelOutputInvalidError(
       issue ?? 'provider response did not match the closed response grammar',
-      { ...(cause.text !== undefined ? { rawText: cause.text } : {}), cause },
+      { cause },
     );
   }
   // Too big a request is not a provider outage: the observation budget or

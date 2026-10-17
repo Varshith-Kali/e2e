@@ -42,6 +42,11 @@ export const AGENT_CODE_TABLE: Readonly<
   STEP_TIMEOUT: { category: 'test', blockedCategory: 'automation' },
   CONTEXT_OVERFLOW: { category: 'test', blockedCategory: 'automation' },
   MODEL_PROVIDER_FAILED: { category: 'infrastructure', modelUnreachable: true },
+  // A refusal is an answer about the request, not a provider outage: the
+  // prompt was denied by policy, so the fix is to rephrase it, never to
+  // retry it. `configuration` (not `test`) keeps the runner's retry policy
+  // from spending another call on a prompt that is refused by construction.
+  MODEL_REFUSED: { category: 'configuration' },
   CANCELLED: { category: 'infrastructure' },
   AUTHENTICATION_FAILED: { category: 'test' },
   MODEL_OUTPUT_INVALID: { category: 'test' },
