@@ -300,7 +300,7 @@ function translateModelError(
   model: Pick<ResolvedModel, 'provider' | 'id'>,
   finished: FinishedCall | undefined,
 ): Error {
-  const { APICallError, NoObjectGeneratedError } = aiSdk();
+  const { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } = aiSdk();
   const cause = unwrapRetry(rawCause);
   if (finished?.finishReason === 'content-filter') return modelRefusalError(model, finished.rawFinishReason, cause);
   if (cause instanceof AgentError) return cause;
@@ -317,6 +317,16 @@ function translateModelError(
     );
   }
   if (isModelRefusal(cause)) return modelRefusalError(model, undefined, cause);
+  // The SDK's no-output error comes from the `result.output` getter when the
+  // model produced nothing to parse (an empty `length` finish, say): the
+  // response failed the closed grammar, so it is invalid output — a test
+  // verdict with repair budget — not a provider outage.
+  if (NoOutputGeneratedError.isInstance(cause)) {
+    return new ModelOutputInvalidError(
+      issue ?? 'provider response did not match the closed response grammar',
+      { cause },
+    );
+  }
   if (NoObjectGeneratedError.isInstance(cause)) {
     return new ModelOutputInvalidError(
       issue ?? 'provider response did not match the closed response grammar',
