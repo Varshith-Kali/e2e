@@ -129,6 +129,14 @@ describe('verdictExitCodes', () => {
     expect(exitCodeFor([result('passed', [attempt('failed', [error])])])).toBe(4);
   });
 
+  it('keeps the highest-precedence code across several cleanup errors', () => {
+    const errors: SerializedError[] = [
+      cleanupTimeoutError(),
+      { ...cleanupTimeoutError(), code: 'SESSION_CLOSE_FAILED', category: 'internal' },
+    ];
+    expect(exitCodeFor([result('passed', [attempt('failed', errors)])])).toBe(4);
+  });
+
   it('ignores a forced cleanup: the interrupt already sets the code', () => {
     expect(exitCodeFor([result('passed', [attempt('forced', [cleanupTimeoutError()])])])).toBe(0);
   });
