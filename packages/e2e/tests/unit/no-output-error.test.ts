@@ -63,6 +63,14 @@ describe('empty model output', () => {
     expect((error as Error).message).toContain('error finish (raw finish reason: error)');
   });
 
+  it('structured call: an empty content-filter finish is MODEL_REFUSED, not MODEL_OUTPUT_INVALID', async () => {
+    const model = createScriptedInstance('fake', 'scripted', async () => scriptedResult([], 'content-filter'));
+    const error = await generateError(model);
+
+    expect(isAgentError(error)).toBe(true);
+    expect(error).toMatchObject({ code: 'MODEL_REFUSED', category: 'test' });
+  });
+
   it('structured call: tool-calls with text keeps the raw text on MODEL_OUTPUT_INVALID', async () => {
     const model = createScriptedInstance('fake', 'scripted', async () =>
       scriptedResult([{ type: 'text', text: '{"a":1}' }], 'tool-calls'),
