@@ -49,7 +49,9 @@ describe('empty model output', () => {
 
     expect(isAgentError(error)).toBe(true);
     expect(error).toMatchObject({ code: 'MODEL_OUTPUT_INVALID', category: 'test' });
-    expect((error as Error).message).toContain('length');
+    // The scripted raw spelling of `length` is `max_tokens`; seeing it in the
+    // message proves the raw finish reason is what flows through.
+    expect((error as Error).message).toContain('max_tokens');
   });
 
   it('structured call: an error finish stays MODEL_PROVIDER_FAILED', async () => {
@@ -58,6 +60,7 @@ describe('empty model output', () => {
 
     expect(isAgentError(error)).toBe(true);
     expect(error).toMatchObject({ code: 'MODEL_PROVIDER_FAILED', category: 'infrastructure' });
+    expect((error as Error).message).toContain('error finish (raw finish reason: error)');
   });
 
   it('structured call: tool-calls with text keeps the raw text on MODEL_OUTPUT_INVALID', async () => {

@@ -36,7 +36,10 @@ export function scriptedResult(
 ): object {
   return {
     content,
-    finishReason: { unified: finishReason, raw: finishReason },
+    // `raw` carries the provider spelling, not the unified one, so tests can
+    // tell `rawFinishReason` apart from `finishReason` (`length` is the one
+    // whose provider spelling differs: `max_tokens`).
+    finishReason: { unified: finishReason, raw: finishReason === 'length' ? 'max_tokens' : finishReason },
     usage: {
       inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
       outputTokens: { total: 20, text: 20, reasoning: 0 },
