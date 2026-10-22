@@ -128,12 +128,22 @@ export function createModelAdapter(model: ResolvedModel | undefined, agentName =
         // The SDK only parses `result.output` on a `stop` finish, or on a
         // non-`tool-calls` finish with text. Otherwise the getter throws a bare
         // `NoOutputGeneratedError` carrying no finish reason, text, or cause,
-        // so read them first: an `error` finish stays a provider failure, and
-        // anything else with nothing to parse is invalid output.
+        // so read them first: an `error` finish is thrown as a provider
+        // failure with its raw finish reason, and anything else with nothing
+        // to parse is invalid output.
         const finishReason = result.finishReason;
         const rawText = result.text;
+        // `hasParsedOutput` mirrors the AI SDK's internal condition for when
+        // the `output` getter parses (the `ai` package's dist/index.js, at
+        // the `output` getter); update it if the SDK changes that rule.
         const hasParsedOutput = finishReason === 'stop' || (finishReason !== 'tool-calls' && rawText !== '');
-        if (!hasParsedOutput && finishReason !== 'error') {
+        if (!hasParsedOutput) {
+          if (finishReason === 'error') {
+            throw new AgentError(
+              'MODEL_PROVIDER_FAILED',
+              `model provider failed: the call ended on an error finish (raw finish reason: ${result.rawFinishReason ?? finishReason})`,
+            );
+          }
           throw new ModelOutputInvalidError(
             `model returned no structured output (finish reason: ${result.rawFinishReason ?? finishReason})`,
             rawText === '' ? {} : { rawText },
