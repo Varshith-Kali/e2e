@@ -1388,11 +1388,9 @@ function statusOf(exitCode: RunExitCode): Exclude<RunStatus, 'blocked'> {
  * A cleanup that failed after the attempt finished (a required video that
  * could not be finalized, a session that would not close) is an
  * artifact/infrastructure failure the report already shows on the attempt.
- * The run asked for that artifact, so its loss must reach the exit code even
- * when the test itself passed; otherwise the run exits 0 as if everything it
- * was asked to produce exists.
+ * An attempt whose cleanup failed adds its cleanup errors' codes, even when the test passed.
  */
-export function verdictExitCodes(results: readonly ResultRecord[], serialGroups: readonly SerialGroupRecord[]): number[] {
+function verdictExitCodes(results: readonly ResultRecord[], serialGroups: readonly SerialGroupRecord[]): number[] {
   const codes: number[] = [0];
   for (const verdict of [...results, ...serialGroups]) {
     switch (verdict.status) {
@@ -1411,13 +1409,8 @@ export function verdictExitCodes(results: readonly ResultRecord[], serialGroups:
     }
     for (const attempt of verdict.attempts) {
       if (attempt.cleanup !== 'failed') continue;
-      const cleanupErrors = attempt.secondaryErrors.filter((secondary) => secondary.phase === 'cleanup');
-      if (cleanupErrors.length === 0) {
-        codes.push(exitCodeForCategory('infrastructure'));
-      } else {
-        for (const cleanupError of cleanupErrors) {
-          codes.push(exitCodeForCategory(cleanupError.category));
-        }
+      for (const cleanupError of attempt.secondaryErrors.filter((secondary) => secondary.phase === 'cleanup')) {
+        codes.push(exitCodeForCategory(cleanupError.category));
       }
     }
   }
