@@ -41,7 +41,7 @@ test('upgrade to Pro', async ({ agent }) => {
 
 - In a mixed run the highest-precedence code present wins,
   `130 > 4 > 3 > 2 > 1 > 0`. The report keeps every individual result.
-- A passed test whose cleanup failed (a required video that was not
+- A test whose cleanup failed (a required video that was not
   finalized, a session that did not close) exits with that cleanup error's
   code, usually 3.
 - A setup assertion failure is a test failure and skips its dependents.

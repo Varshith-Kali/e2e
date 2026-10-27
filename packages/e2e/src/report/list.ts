@@ -15,7 +15,7 @@ import { resultId } from '../internal/ids.ts';
 import { packageVersion } from '../internal/package-version.ts';
 import type { RunEvent, RunEventFact, RunEventOf, RunEventResult, SetupStep } from '../run/events.ts';
 import type { AppLogRecord } from '../run/steps.ts';
-import { failureBeforeSkip, type ArtifactRecord, type AttemptRecord, type FailureEvidence, type ResultStatus, type SerialGroupRecord } from '../run/records.ts';
+import { cleanupErrorsOf, failureBeforeSkip, type ArtifactRecord, type AttemptRecord, type FailureEvidence, type ResultStatus, type SerialGroupRecord } from '../run/records.ts';
 import type { Reporter, ReporterSummary } from '../types.ts';
 import { codeFrame, userFrame } from './code-frame.ts';
 import {
@@ -135,15 +135,6 @@ function appLogTally(appLog: readonly AppLogRecord[]): string | undefined {
     ...(warnings === 0 ? [] : [`${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`]),
   ];
   return parts.length === 0 ? undefined : parts.join(', ');
-}
-
-/** The cleanup-phase secondary errors of attempts whose cleanup failed. */
-function cleanupErrorsOf(
-  attempts: readonly { readonly cleanup: string; readonly secondaryErrors: readonly SerializedError[] }[],
-): SerializedError[] {
-  return attempts.flatMap((attempt) =>
-    attempt.cleanup === 'failed' ? attempt.secondaryErrors.filter((secondary) => secondary.phase === 'cleanup') : [],
-  );
 }
 
 /** Details of an ordinary result: summed over its attempts, the error from the last. */
@@ -898,11 +889,7 @@ export class ListReporter implements Reporter {
     }
   }
 
-  /**
-   * One yellow glance line per cleanup failure under a passed or flaky
-   * test: the test passed, so the failure is a warning, not a failure
-   * line, but the run still exits on it and the reader must see why.
-   */
+  /** One yellow glance line per cleanup failure under the test. */
   private cleanupLines(line: TestLine): string[] {
     const { pc } = this;
     return line.cleanupErrors.map((error) => {

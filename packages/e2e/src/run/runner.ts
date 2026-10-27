@@ -48,7 +48,7 @@ import { writeJsonReport } from '../report/write.ts';
 import { createRunEventEmitter, toEventResult, type RunEventSink, type RunExitCode, type RunStatus, type RunEventFact, type SetupOutcome, type SetupStep } from './events.ts';
 import { allocateAppPorts } from './app-ports.ts';
 import { inProcessSpawner } from './in-process.ts';
-import { someSkippedAfterFailure, tracedResultIds, type ResultRecord, type RunError, type SerialGroupRecord } from './records.ts';
+import { cleanupErrorsOf, someSkippedAfterFailure, tracedResultIds, type ResultRecord, type RunError, type SerialGroupRecord } from './records.ts';
 import { runUnits } from './scheduler.ts';
 import { buildWorkPlans, longestFirst, nonRunResult, plannedSlots, type TargetWorkPlan, type TimeLimit } from './units.ts';
 import { SessionStore } from './sessions.ts';
@@ -1385,9 +1385,6 @@ function statusOf(exitCode: RunExitCode): Exclude<RunStatus, 'blocked'> {
  * for its members, whose results carry no attempts, and for a group attempt
  * that failed before any member ran (a launch), whose members are skipped.
  *
- * A cleanup that failed after the attempt finished (a required video that
- * could not be finalized, a session that would not close) is an
- * artifact/infrastructure failure the report already shows on the attempt.
  * An attempt whose cleanup failed adds its cleanup errors' codes, even when the test passed.
  */
 function verdictExitCodes(results: readonly ResultRecord[], serialGroups: readonly SerialGroupRecord[]): number[] {
@@ -1407,11 +1404,8 @@ function verdictExitCodes(results: readonly ResultRecord[], serialGroups: readon
       default:
         break;
     }
-    for (const attempt of verdict.attempts) {
-      if (attempt.cleanup !== 'failed') continue;
-      for (const cleanupError of attempt.secondaryErrors.filter((secondary) => secondary.phase === 'cleanup')) {
-        codes.push(exitCodeForCategory(cleanupError.category));
-      }
+    for (const cleanupError of cleanupErrorsOf(verdict.attempts)) {
+      codes.push(exitCodeForCategory(cleanupError.category));
     }
   }
   return codes;
