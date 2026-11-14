@@ -361,12 +361,13 @@ of sleeping.
 
 A redacted snapshot of the screen (roles, names, text, states), prior-step
 summaries, and your context; never raw HTML, cookies, headers, environment
+<<<<<<< HEAD
 values, or a `Secret`'s value; password fields masked, unless a page
 script hides one from e2e. The first screen of a step arrives whole; later
 action results report what changed, keyed by node ids stable while an
 element exists, or the whole screen when most changed, with large subtrees
 that have not changed since the last screen folded to one line each naming
-the node count and the revision they were last seen at. `observe` still
+the node count and the revision that last listed them in full. `observe` still
 returns the complete tree. Pixels arrive through `vision` on a judgment or
 the act loop's
 `screenshot` and point tools, with secure fields masked. When
