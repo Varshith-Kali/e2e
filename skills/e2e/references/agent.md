@@ -361,7 +361,6 @@ of sleeping.
 
 A redacted snapshot of the screen (roles, names, text, states), prior-step
 summaries, and your context; never raw HTML, cookies, headers, environment
-<<<<<<< HEAD
 values, or a `Secret`'s value; password fields masked, unless a page
 script hides one from e2e. The first screen of a step arrives whole; later
 action results report what changed, keyed by node ids stable while an
