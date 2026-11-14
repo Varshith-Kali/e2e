@@ -53,6 +53,16 @@ function toolOutput(message: ModelMessage): ToolResultPart['output'] {
   return part!.output;
 }
 
+/** The full-screen text a tool message's result carries. */
+function screenText(message: ModelMessage): string {
+  const output = toolOutput(message);
+  if (output.type === 'text') return output.value;
+  if (output.type !== 'content') throw new Error('expected a tool result carrying a full screen');
+  const textItem = output.value.find((item) => item.type === 'text');
+  if (textItem === undefined) throw new Error('expected a tool result carrying a full screen');
+  return textItem.text;
+}
+
 /** Characters of text a transcript carries, the text beside a screenshot included; the overflow retry's measure. */
 function textChars(messages: readonly ModelMessage[]): number {
   return messages.reduce((total, message) => {
@@ -225,10 +235,20 @@ describe('compactScreenHistory', () => {
       fullScreenResult('c3', 'b3'),
       foldedScreenResult('c4', 'b4', 'b1'),
     ];
+    // Only b2 and b3 may be elided: b1 stays as the fold dependency of b4,
+    // and b4 stays as the newest screen. A budget that exactly covers the
+    // elidable screens leaves the transcript alone only when the kept
+    // screens spend none of it; counting b1 and b4 would push the total
+    // over budget and elide b2 and b3.
+    const elidableBytes = [messages[1]!, messages[2]!].reduce(
+      (bytes, message) => bytes + Buffer.byteLength(screenText(message), 'utf8'),
+      0,
+    );
+    expect(compactScreenHistory(messages, { keepStaleBytes: elidableBytes })).toBe(messages);
     const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
     expect(compacted).not.toBe(messages);
     // The opening screenshot result carries only the kept b1 screen, so it
-    // is returned untouched and the budget still covers both elidable screens.
+    // is returned untouched while the elidable screens go.
     expect(compacted[0]).toBe(messages[0]);
     expect(toolOutput(compacted[1]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
     expect(toolOutput(compacted[2]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
