@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { projectTools } from '@e2e-dev/core/lib/agent/default-agent';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
@@ -182,6 +183,49 @@ describe('tool loop context overflow', () => {
     // second screen's fold line with it.
     expect(loopCalls[2]!.prompt).toContain("more characters cut: the request exceeded the model's context window");
     expect(loopCalls[2]!.prompt).not.toContain('link "Item 1"');
+    // The next look lists the sidebar in full instead of folding against a
+    // screen the model no longer holds whole.
+    const next = loopCalls[3]!.lastToolResult;
+    expect(next).toMatch(/Current screen \(revision b\d+/);
+    expect(next).toContain('#n901 link "Item 1"');
+    expect(next).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+    expect(step.metrics?.modelCalls).toBe(3);
+  });
+
+  it('lists the next screen in full after the overflow retry cut the screen its folds named, for a custom loop built from createGrammarTools', async () => {
+    let variant = 0;
+    const model = installFakeLoopModel(({ turn }) => {
+      variant = turn;
+      if (turn === 1) return [{ toolName: 'observe', input: {} }];
+      if (turn === 2) throw new Error(OVERFLOW);
+      if (turn === 3) return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+    });
+    // The documented custom brain: the loop chassis plus the grammar tools,
+    // with no presenter of its own. Its first observe lists the sidebar in
+    // full, so the second look must not fold against the cut screen.
+    const executor = createToolLoopExecutor({
+      name: 'custom-loop',
+      tools: (context) => createGrammarTools(context),
+      buildPrompt: () => 'read the big output',
+    });
+    const { fixtures, steps } = runtime(foldingBigScreen(() => variant), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(4);
+    // The first look listed the sidebar in full, at whatever revision the
+    // settling captures minted.
+    const first = loopCalls[1]!.lastToolResult;
+    expect(first).toContain('#n901 link "Item 1"');
+    expect(first).not.toContain('unchanged since revision');
+    // The retry cut the first screen's tail, sidebar included: the opening
+    // prompt carries no screen here, so the cut shows in the observe result
+    // the retried request carries.
+    expect(loopCalls[2]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");
+    expect(loopCalls[2]!.lastToolResult).not.toContain('link "Item 1"');
     // The next look lists the sidebar in full instead of folding against a
     // screen the model no longer holds whole.
     const next = loopCalls[3]!.lastToolResult;

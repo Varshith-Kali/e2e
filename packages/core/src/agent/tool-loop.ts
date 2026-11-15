@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { isScreenOutput, reportsNoEffect, toolResultTexts } from './screen-update.ts';
+import { clearPresenterFolds, isScreenOutput, reportsNoEffect, toolResultTexts } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -188,14 +188,6 @@ export interface ToolLoopExecutorOptions {
    * effort). Defaults to the config-resolved `agent.providerOptions`.
    */
   readonly providerOptions?: ProviderOptions;
-  /**
-   * Called when a context-overflow retry shrinks the history and resends it:
-   * the screens the presenter recorded as listed in full may have been cut
-   * to their head, so the executor forgets what it recorded and the next
-   * screen renders in full instead of folding against text the model no
-   * longer holds. Receives the step's context.
-   */
-  readonly onOverflowShrink?: (context: StepExecutorContext) => void;
   /**
    * Between-turn history preparation: compaction, and anything the executor
    * wants the model to read before its next turn. Runs before the loop's own
@@ -703,7 +695,12 @@ class LoopRun {
     }
     this.overflowNote = ' again after the history was shrunk once';
     this.turnOffset = this.turnsUsed;
-    this.options.onOverflowShrink?.(this.context);
+    // The screens the step's presenter recorded as listed in full may have
+    // been cut to their head, so it forgets what it recorded and the next
+    // screen renders in full instead of folding against text the model no
+    // longer holds. The presenter is shared by the opening prompt and the
+    // grammar tools, built-in or custom, so one clear covers both paths.
+    clearPresenterFolds(this.context);
     this.note(`context overflow before turn ${String(this.turnsUsed + 1)}: history shrunk from ${String(before)} to ${String(after)} chars, retrying once`);
     return shrunk;
   }

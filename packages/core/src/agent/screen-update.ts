@@ -25,7 +25,7 @@
  */
 
 import type { ToolResultPart } from 'ai';
-import type { ExecutorObservation, ExecutorPixels } from './executor.ts';
+import type { ExecutorObservation, ExecutorPixels, StepExecutorContext } from './executor.ts';
 import { sha256Hex } from '../internal/ids.ts';
 import { interactiveNodeCount, pixelDigest } from './observation.ts';
 import type { VisionDegradation } from '../run/steps.ts';
@@ -386,6 +386,34 @@ export class ScreenPresenter {
     if (observation.pixelsWithheld === undefined) return text;
     return `${text}\n\nNo screenshot: ${withheldAdvice(observation.pixelsWithheld)}`;
   }
+}
+
+/**
+ * One presenter per dispatched step, shared by the opening prompt and the
+ * grammar tools. The built-in agent passes its own explicitly, and a custom
+ * loop built from `createGrammarTools` gets the same one by default, so the
+ * loop that shrinks the history can forget the folds both of them recorded.
+ * Keyed by the step's context object, so a step's presenter dies with it.
+ */
+const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
+
+/** The step's presenter, creating it on first use. */
+export function presenterFor(context: StepExecutorContext): ScreenPresenter {
+  let presenter = presenters.get(context);
+  if (presenter === undefined) {
+    presenter = new ScreenPresenter();
+    presenters.set(context, presenter);
+  }
+  return presenter;
+}
+
+/**
+ * Drops the fold records of the step's presenter, if it has one: the overflow
+ * retry may have cut the screens they name, so the next full render lists
+ * everything in full instead of folding against text the model no longer holds.
+ */
+export function clearPresenterFolds(context: StepExecutorContext): void {
+  presenters.get(context)?.clearFoldRecords();
 }
 
 /** The line under a screenshot: its pixel size and the coordinate space the point verbs read. */

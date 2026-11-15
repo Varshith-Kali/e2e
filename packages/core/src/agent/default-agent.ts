@@ -16,7 +16,7 @@ import type { ExecutorObservation, ExecutorObserveOptions, ReplayedPrefix, StepE
 import { interactiveNodeCount } from './observation.ts';
 import { testTitleLine } from './prompts.ts';
 import { grammarTools } from './primitives.ts';
-import { ScreenPresenter } from './screen-update.ts';
+import { presenterFor } from './screen-update.ts';
 import { compactScreenHistory, compactScreenshotHistory } from './transcript-compaction.ts';
 import { createToolLoopExecutor, type ToolLoopHelpers } from './tool-loop.ts';
 import { toolAppliesTo, withToolContext } from './tool.ts';
@@ -53,23 +53,6 @@ const ASSERT_RULES = `You are judging exactly one assertion against the current 
 - Each scroll result contains a fresh observation. When screenshots are shown, each result includes fresh pixels too.
 - Conclude passed when the collected evidence establishes the assertion, failed with ASSERTION_FAILED when it contradicts the assertion, and failed with ASSERTION_INCONCLUSIVE when the available evidence or remaining budget cannot establish an answer.`;
 
-/** One presenter per dispatched step, shared by the opening prompt and the tools that follow it. */
-const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
-
-function presenterFor(context: StepExecutorContext): ScreenPresenter {
-  let presenter = presenters.get(context);
-  if (presenter === undefined) {
-    presenter = new ScreenPresenter();
-    presenters.set(context, presenter);
-  }
-  return presenter;
-}
-
-/** Drops the fold records of the step's presenter, if it has one: the overflow retry may have cut the screens they name. */
-function clearPresenterFolds(context: StepExecutorContext): void {
-  presenters.get(context)?.clearFoldRecords();
-}
-
 /** What the built-in agent is built from: an agents entry's `system` and its validated `tools`. */
 export interface BuiltInAgentOptions {
   /** Appended to the built-in execution rules; read by act and exploring assert loops. */
@@ -95,7 +78,6 @@ function createActLoop(options: BuiltInAgentOptions): StepExecutor {
     ...BUILT_IN_AGENT,
     system: rules(BASE_RULES, options.system),
     prepareMessages: (messages) => compactScreenshotHistory(compactScreenHistory(messages)),
-    onOverflowShrink: clearPresenterFolds,
     tools: (context, helpers) => loopTools(context, helpers, options.tools),
     buildPrompt: async (context) => {
       // The opening look is tree-only, unless no listed interactive node

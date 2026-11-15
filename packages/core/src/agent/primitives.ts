@@ -26,7 +26,7 @@ import { markWaitingTool } from './loop-guards.ts';
 import { OperationQueue } from './operation-queue.ts';
 import { imagePointToViewport, POINT_VERBS } from './point-tap.ts';
 import { SAMPLE_NAMES, SAMPLE_PREFIX } from './sample-files.ts';
-import { ScreenPresenter, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
+import { ScreenPresenter, presenterFor, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
 
 /** Codes the model may pick when concluding; runtime codes are runtime-assigned. */
 const MODEL_ERROR_CODES = [
@@ -932,7 +932,9 @@ function createPointTools(
  */
 function verbKit(context: StepExecutorContext, options: GrammarToolSetup) {
   const guard = options.guard ?? (<T>(body: () => Promise<T>) => body());
-  const screen: ScreenPresenter = options.screen ?? new ScreenPresenter();
+  // No presenter of its own: the step's shared one, so a custom loop built
+  // from these tools folds against the same screens the loop itself shrinks.
+  const screen: ScreenPresenter = options.screen ?? presenterFor(context);
   const queue = new OperationQueue();
   const inOrder = <T>(body: () => Promise<T>): Promise<T> => queue.run(body);
   /** The screen after an action: the changes since the one the model holds and, once the step shows pixels, a fresh screenshot. */
