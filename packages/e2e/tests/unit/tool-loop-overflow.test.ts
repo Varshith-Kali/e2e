@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { projectTools } from '@e2e-dev/core/lib/agent/default-agent';
+import type { StepExecutor } from '@e2e-dev/core/lib/agent/executor';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { resolveConfig } from '../../src/config/resolve-run.ts';
 import { defineEngine, type EngineHandle, type SemanticNode } from '@e2e-dev/core/lib/engine/index';
@@ -235,6 +236,50 @@ describe('tool loop context overflow', () => {
     const step = steps.all()[0]!;
     expect(step.status).toBe('passed');
     expect(step.metrics?.modelCalls).toBe(3);
+  });
+
+  it('gives a second custom loop sharing one step context its own first screen', async () => {
+    const model = installFakeLoopModel(({ turn }) => {
+      if (turn === 1) return [{ toolName: 'observe', input: {} }];
+      if (turn === 2) return [{ toolName: 'observe', input: {} }];
+      if (turn === 3) return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop A read the sidebar' } }];
+      if (turn === 4) return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop B read the sidebar' } }];
+    });
+    // The review's repro: one custom runStep that runs two loops against the
+    // same step context, each built from createGrammarTools. The screen never
+    // changes, so a presenter shared across the loops would answer loop B's
+    // first look with the screen loop A already showed.
+    const loop = () =>
+      createToolLoopExecutor({
+        name: 'custom-loop',
+        tools: (context) => createGrammarTools(context),
+        buildPrompt: () => 'read the big output',
+      });
+    const executor: StepExecutor = {
+      name: 'two-loops',
+      runStep: async (context) => {
+        await loop().runStep(context);
+        return loop().runStep(context);
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => 0), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(5);
+    // Loop A's second look saw the screen it already holds, so the shared
+    // presenter has state loop B never saw.
+    const second = loopCalls[2]!.lastToolResult;
+    expect(second).toContain('Screen unchanged since revision');
+    // Loop B's first look lists the sidebar in full, as its own first screen,
+    // instead of reporting the first loop's screen unchanged.
+    const loopBFirst = loopCalls[4]!.lastToolResult;
+    expect(loopBFirst).toMatch(/Current screen \(revision b\d+/);
+    expect(loopBFirst).toContain('#n901 link "Item 1"');
+    expect(loopBFirst).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
   });
 
   it('reports CONTEXT_OVERFLOW when the shrunk request is refused again', async () => {

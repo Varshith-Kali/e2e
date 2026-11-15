@@ -147,7 +147,7 @@ function loopTools(
 ): ToolSet {
   return {
     ...guardedTools(helpers, projectTools(context, tools)),
-    ...grammarTools(context, { guard: helpers.guard, screen: presenterFor(context), secretsListedByCaller: true }),
+    ...grammarTools(context, { guard: helpers.guard, secretsListedByCaller: true }),
   };
 }
 

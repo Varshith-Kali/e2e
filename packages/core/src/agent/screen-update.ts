@@ -390,10 +390,10 @@ export class ScreenPresenter {
 
 /**
  * One presenter per dispatched step, shared by the opening prompt and the
- * grammar tools. The built-in agent passes its own explicitly, and a custom
- * loop built from `createGrammarTools` gets the same one by default, so the
- * loop that shrinks the history can forget the folds both of them recorded.
- * Keyed by the step's context object, so a step's presenter dies with it.
+ * grammar tools. A loop run binds a fresh one at the start of its run, so
+ * the presenter state matches that run's transcript alone: two loops run
+ * against one step context each see their own first screen. Keyed by the
+ * step's context object, so a step's presenter dies with it.
  */
 const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
 
@@ -408,12 +408,15 @@ export function presenterFor(context: StepExecutorContext): ScreenPresenter {
 }
 
 /**
- * Drops the fold records of the step's presenter, if it has one: the overflow
- * retry may have cut the screens they name, so the next full render lists
- * everything in full instead of folding against text the model no longer holds.
+ * Binds a fresh presenter to the step's context, replacing whatever it held:
+ * a loop run owns the transcript, not the step context, so each run starts
+ * from a screen its own model has seen. `presenterFor` stays the fallback
+ * for tools used outside a loop.
  */
-export function clearPresenterFolds(context: StepExecutorContext): void {
-  presenters.get(context)?.clearFoldRecords();
+export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
+  const presenter = new ScreenPresenter();
+  presenters.set(context, presenter);
+  return presenter;
 }
 
 /** The line under a screenshot: its pixel size and the coordinate space the point verbs read. */

@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { clearPresenterFolds, isScreenOutput, reportsNoEffect, toolResultTexts } from './screen-update.ts';
+import { bindPresenter, isScreenOutput, reportsNoEffect, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -285,6 +285,8 @@ class LoopRun {
    * verdict, and the note completes its message.
    */
   private overflowNote: string | undefined;
+  /** The presenter this run bound for its context, so a shrink clears this run's folds, never another run's. */
+  private presenter: ScreenPresenter | undefined;
   /** How this step asks for tool calls; flips to `auto` when the model rejects a forced choice. */
   private toolChoice: ToolChoiceMode;
   /** The last turn that ran, for continuing after a reply without tool calls. */
@@ -351,6 +353,11 @@ class LoopRun {
   }
 
   async run(): Promise<StepVerdict> {
+    // A fresh presenter per run: the transcript belongs to this loop, not
+    // the step context, so a second loop run against the same context
+    // starts from a screen its own model has seen. Bound before the tools
+    // and the opening prompt, which both read it through `presenterFor`.
+    this.presenter = bindPresenter(this.context);
     const helpers = this.helpers();
     this.executorTools = this.options.tools(this.context, helpers);
     const tools: ToolSet = {
@@ -695,12 +702,8 @@ class LoopRun {
     }
     this.overflowNote = ' again after the history was shrunk once';
     this.turnOffset = this.turnsUsed;
-    // The screens the step's presenter recorded as listed in full may have
-    // been cut to their head, so it forgets what it recorded and the next
-    // screen renders in full instead of folding against text the model no
-    // longer holds. The presenter is shared by the opening prompt and the
-    // grammar tools, built-in or custom, so one clear covers both paths.
-    clearPresenterFolds(this.context);
+    // The retry may have cut the screens this run's folds name, so the next screen renders in full.
+    this.presenter?.clearFoldRecords();
     this.note(`context overflow before turn ${String(this.turnsUsed + 1)}: history shrunk from ${String(before)} to ${String(after)} chars, retrying once`);
     return shrunk;
   }
