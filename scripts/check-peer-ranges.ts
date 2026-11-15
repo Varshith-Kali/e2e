@@ -23,10 +23,10 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { collectEngineImports, listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
+import { collectEngineImports, fixedGroups, listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
 import { nextVersionAfterBump, pendingBumps } from './changeset-bumps.ts';
-import { engineImportProblems, tagExportsAt, type EngineImportCheck, type TagExports } from './engine-exports.ts';
-import { peerFloor, peerRangeProblems } from './peer-ranges.ts';
+import { engineImportProblems, resolveWorkspaceSpecifier, tagExportsAt, type EngineImportCheck, type TagExports } from './engine-exports.ts';
+import { applyFixedGroups, peerFloor, peerRangeProblems } from './peer-ranges.ts';
 import { REPO_ROOT, publicPackages, siblingPeers } from './public-packages.ts';
 
 const packages = publicPackages();
@@ -49,6 +49,11 @@ for (const [name, bump] of pendingBumps(pending.map(({ changeset }) => changeset
   const next = nextVersionAfterBump(version, bump);
   if (next !== undefined) nextVersions.set(name, next);
 }
+// A changesets `fixed` group releases every member at one version, so a
+// member's pending version is the group's highest, not its own bump alone:
+// `e2e` and `@e2e-dev/core` release together, and the core package's first
+// release is the runner's next version, not a `0.0.1` patch of its own.
+applyFixedGroups(nextVersions, fixedGroups());
 
 const problems = peerRangeProblems(packages, readChangelog, nextVersions);
 
@@ -77,13 +82,18 @@ const exportsAt = (sibling: string, subpath: string, version: string): TagExport
   const key = `${sibling}@${version}:${subpath}`;
   if (exportsCache.has(key)) return exportsCache.get(key);
   const siblingDir = siblingDirs.get(sibling);
-  let resolved = siblingDir === undefined ? undefined : tagExportsAt((path) => showAtTag(`${sibling}@${version}`, path), siblingDir, subpath);
+  const tagRead = (path: string): string | undefined => showAtTag(`${sibling}@${version}`, path);
+  // A bare `export *` into another workspace package resolves through
+  // that package's manifest, read at the same version as the tag lookup.
+  const resolver = (readFile: (path: string) => string | undefined) => (specifier: string): string | undefined =>
+    resolveWorkspaceSpecifier(readFile, siblingDirs, specifier);
+  let resolved = siblingDir === undefined ? undefined : tagExportsAt(tagRead, siblingDir, subpath, resolver(tagRead));
   if (resolved === undefined && siblingDir !== undefined && nextVersions.get(sibling) === version) {
     // A floor naming the version the sibling's pending changesets will
     // release has no tag yet, so the tag lookup cannot verify it; the
     // working tree is that pending release's source, so verify against it
     // instead of passing the floor on an unverifiable note.
-    resolved = tagExportsAt(showWorkingTree, siblingDir, subpath);
+    resolved = tagExportsAt(showWorkingTree, siblingDir, subpath, resolver(showWorkingTree));
   }
   exportsCache.set(key, resolved);
   return resolved;

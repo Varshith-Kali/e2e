@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { collectEngineImports } from './check-helpers.ts';
+import { collectEngineImports, fixedGroups } from './check-helpers.ts';
 
 describe('collectEngineImports', () => {
   it('names the file that fails to parse', () => {
@@ -24,5 +24,11 @@ describe('collectEngineImports', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('fixedGroups', () => {
+  it('reads the fixed groups from the repo changesets config', () => {
+    assert.deepEqual(fixedGroups(), [['e2e', '@e2e-dev/core']]);
   });
 });

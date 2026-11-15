@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { addEngineImports, engineImportProblems, engineImports, resolveEntryExports, resolveModule, subpathEntryFile, tagExportsAt, type EngineImportCheck, type EngineImportMap, type ImportKind } from './engine-exports.ts';
+import { addEngineImports, engineImportProblems, engineImports, resolveEntryExports, resolveModule, resolveWorkspaceSpecifier, subpathEntryFile, tagExportsAt, type EngineImportCheck, type EngineImportMap, type ImportKind } from './engine-exports.ts';
 
 describe('engineImports', () => {
   it('reads named, aliased, and type-only imports from e2e entries', () => {
@@ -322,6 +322,107 @@ describe('exportedNames and resolveEntryExports', () => {
     assert.equal(subpathEntryFile('not json', 'packages/e2e', 'engine'), undefined);
     assert.equal(subpathEntryFile(packageJson, 'packages/e2e', 'missing'), undefined);
   });
+
+  it('reads a wildcard entry off a sibling package.json', () => {
+    const packageJson = JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/agent/public'), 'packages/core/src/agent/public.ts');
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/types'), 'packages/core/src/types.ts');
+  });
+
+  it('follows a bare export star into a workspace sibling', () => {
+    // The shape of the core move: e2e/agent re-exports the core package
+    // through a bare specifier, and the names live in the core source.
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './agent': { types: './dist/agent/public.d.ts', default: './dist/agent/public.js' } } }),
+      ],
+      ['packages/e2e/src/agent/public.ts', `export * from '@e2e-dev/core/lib/agent/public';\n`],
+      [
+        'packages/core/package.json',
+        JSON.stringify({ exports: { './engine': { types: './dist/engine/index.d.ts', default: './dist/engine/index.js' }, './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } }),
+      ],
+      [
+        'packages/core/src/agent/public.ts',
+        `export { defineTool, type DefinedTool, type ToolAnnotations } from './tool.ts';\n`,
+      ],
+      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\\nexport interface DefinedTool {}\\nexport interface ToolAnnotations {}\\n`],
+    ]);
+    const read = (path: string): string | undefined => files.get(path);
+    const dirs = new Map([
+      ['e2e', 'packages/e2e'],
+      ['@e2e-dev/core', 'packages/core'],
+    ]);
+    const resolveBare = (specifier: string): string | undefined => resolveWorkspaceSpecifier(read, dirs, specifier);
+    const exported = resolveEntryExports(read, 'packages/e2e/src/agent/public.ts', resolveBare);
+    assert.deepEqual([...(exported?.values ?? [])].toSorted(), ['defineTool']);
+    assert.deepEqual([...(exported?.types ?? [])].toSorted(), ['DefinedTool', 'ToolAnnotations']);
+  });
+
+  it('does not follow a bare export star without a resolver', () => {
+    const files = new Map([['packages/e2e/src/agent/public.ts', `export * from '@e2e-dev/core/lib/agent/public';\n`]]);
+    const exported = resolveEntryExports((path) => files.get(path), 'packages/e2e/src/agent/public.ts');
+    assert.deepEqual([...(exported?.values ?? [])], []);
+    assert.deepEqual([...(exported?.types ?? [])], []);
+  });
+});
+
+describe('resolveWorkspaceSpecifier', () => {
+  const dirs = new Map([
+    ['e2e', 'packages/e2e'],
+    ['@e2e-dev/core', 'packages/core'],
+  ]);
+  const files = new Map([
+    [
+      'packages/core/package.json',
+      JSON.stringify({
+        exports: {
+          '.': { types: './dist/index.d.ts', default: './dist/index.js' },
+          './engine': { types: './dist/engine/index.d.ts', default: './dist/engine/index.js' },
+          './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' },
+        },
+      }),
+    ],
+    [
+      'packages/e2e/package.json',
+      JSON.stringify({ exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } } }),
+    ],
+  ]);
+  const read = (path: string): string | undefined => files.get(path);
+
+  it('resolves an exact subpath and the bare entry', () => {
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core/engine'), 'packages/core/src/engine/index.ts');
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core'), 'packages/core/src/index.ts');
+  });
+
+  it('resolves a wildcard subpath', () => {
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core/lib/agent/public'), 'packages/core/src/agent/public.ts');
+  });
+
+  it('answers undefined for a package outside the workspace', () => {
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, 'zod'), undefined);
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@other/core/engine'), undefined);
+  });
+
+  it('maps a wildcard subpath even when the file does not exist yet; the reader reports it missing', () => {
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core/lib/missing'), 'packages/core/src/missing.ts');
+    const entryFiles = new Map([
+      ['packages/e2e/src/agent/public.ts', `export * from '@e2e-dev/core/lib/missing';\n`],
+      [
+        'packages/core/package.json',
+        JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } }),
+      ],
+    ]);
+    const readEntry = (path: string): string | undefined => entryFiles.get(path);
+    assert.equal(
+      resolveEntryExports(readEntry, 'packages/e2e/src/agent/public.ts', (specifier) => resolveWorkspaceSpecifier(readEntry, dirs, specifier)),
+      undefined,
+    );
+  });
+
+  it('answers undefined when the manifest cannot be read', () => {
+    assert.equal(resolveWorkspaceSpecifier(() => undefined, dirs, '@e2e-dev/core/engine'), undefined);
+  });
 });
 
 describe('tagExportsAt', () => {
@@ -416,6 +517,48 @@ describe('tagExportsAt', () => {
       tagExportsAt((path) => files.get(path), 'packages/e2e', 'agent'),
       undefined,
     );
+  });
+
+  it('follows a bare export star into a workspace sibling when a resolver is given', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './agent': { types: './dist/agent/public.d.ts', default: './dist/agent/public.js' } } }),
+      ],
+      ['packages/e2e/src/agent/public.ts', `export * from '@e2e-dev/core/lib/agent/public';\n`],
+      [
+        'packages/core/package.json',
+        JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } }),
+      ],
+      [
+        'packages/core/src/agent/public.ts',
+        `export { defineTool, type DefinedTool } from './tool.ts';\n`,
+      ],
+      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\\nexport interface DefinedTool {}\\n`],
+    ]);
+    const read = (path: string): string | undefined => files.get(path);
+    const dirs = new Map([
+      ['e2e', 'packages/e2e'],
+      ['@e2e-dev/core', 'packages/core'],
+    ]);
+    const atAgent = tagExportsAt(read, 'packages/e2e', 'agent', (specifier) => resolveWorkspaceSpecifier(read, dirs, specifier));
+    if (atAgent === undefined || atAgent === 'missing') assert.fail('expected export sets through the bare re-export');
+    assert.deepEqual([...atAgent.values], ['defineTool']);
+    assert.deepEqual([...atAgent.types], ['DefinedTool']);
+  });
+
+  it('reads no names through a bare export star without a resolver', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './agent': { types: './dist/agent/public.d.ts', default: './dist/agent/public.js' } } }),
+      ],
+      ['packages/e2e/src/agent/public.ts', `export * from '@e2e-dev/core/lib/agent/public';\n`],
+    ]);
+    const atAgent = tagExportsAt((path) => files.get(path), 'packages/e2e', 'agent');
+    if (atAgent === undefined || atAgent === 'missing') assert.fail('expected empty export sets, not missing');
+    assert.deepEqual([...atAgent.values], []);
+    assert.deepEqual([...atAgent.types], []);
   });
 });
 

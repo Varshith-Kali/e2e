@@ -246,7 +246,7 @@ function declarationKinds(program: ReturnType<typeof parseSync>['program']): Map
   return kinds;
 }
 
-/** The names one file exports, split by kind, and the relative modules its `export *` pulls in. A `type` export or declaration lands in `types`; a class or enum lands in both, since its name is usable as a type; anything else value-like lands in `values`. `export type *` targets are kept apart from value `export *` targets: the former re-export types only. */
+/** The names one file exports, split by kind, and the modules its `export *` pulls in (relative ones, and bare ones when a resolver follows them). A `type` export or declaration lands in `types`; a class or enum lands in both, since its name is usable as a type; anything else value-like lands in `values`. `export type *` targets are kept apart from value `export *` targets: the former re-export types only. */
 function exportedNames(source: string): {
   values: ReadonlySet<string>;
   types: ReadonlySet<string>;
@@ -317,13 +317,29 @@ export function resolveModule(fromFile: string, specifier: string): string | und
 }
 
 /**
+ * Resolves a bare module specifier to a repo source file, or undefined
+ * when it names no workspace package. The check passes one built from the
+ * workspace manifests; tests pass a fake.
+ */
+export type BareSpecifierResolver = (specifier: string) => string | undefined;
+
+/**
  * The export set of the entry file, split by kind, following `export *`
  * chains. A file reached through `export type *` contributes its types
  * only: a function or const there has no type meaning to re-export.
  * `readFile` reads a repo path (undefined when it has none); the caller
  * binds it to a version, for example `git show <tag>:<path>`.
+ * A bare `export *` specifier is followed through `resolveBare` when one
+ * is given: a re-export from another workspace package (for example
+ * `e2e/agent` re-exporting `@e2e-dev/core/lib/agent/public`) contributes
+ * that package's names. Without one, bare chains are not followed, so a
+ * name that only arrives that way reads as missing.
  */
-export function resolveEntryExports(readFile: (path: string) => string | undefined, entryPath: string): ExportSets | undefined {
+export function resolveEntryExports(
+  readFile: (path: string) => string | undefined,
+  entryPath: string,
+  resolveBare?: BareSpecifierResolver,
+): ExportSets | undefined {
   const values = new Set<string>();
   const types = new Set<string>();
   const seen = new Set<string>();
@@ -345,7 +361,7 @@ export function resolveEntryExports(readFile: (path: string) => string | undefin
       for (const name of exported.values) values.add(name);
     }
     const enqueue = (specifier: string, asType: boolean): void => {
-      const target = resolveModule(file, specifier);
+      const target = specifier.startsWith('.') ? resolveModule(file, specifier) : resolveBare?.(specifier);
       if (target !== undefined) queue.push([target, asType]);
     };
     for (const specifier of exported.starModules) enqueue(specifier, typeOnly);
@@ -370,12 +386,72 @@ export function subpathEntryFile(packageJson: string, siblingDir: string, subpat
   return entryFileFromExports(exports, siblingDir, subpath);
 }
 
+/** The `types` target of an `exports` entry (a string, or its `types` field), undefined when it has none. */
+function entryTypesTarget(entry: unknown): string | undefined {
+  if (typeof entry === 'string') return entry;
+  if (isRecord(entry) && typeof entry.types === 'string') return entry.types;
+  return undefined;
+}
+
+/** The `types` target for `subpath` in an `exports` map: the exact key, or a `*` key whose pattern the subpath matches with the middle substituted. Undefined when no key covers it. */
+function exportTypesTarget(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
+  if (exports === undefined) return undefined;
+  const key = exportKey(subpath);
+  const exact = entryTypesTarget(exports[key]);
+  if (exact !== undefined) return exact;
+  for (const [pattern, value] of Object.entries(exports)) {
+    const star = pattern.indexOf('*');
+    if (star === -1) continue;
+    const prefix = pattern.slice(0, star);
+    const suffix = pattern.slice(star + 1);
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const target = entryTypesTarget(value);
+    if (target === undefined || !target.includes('*')) continue;
+    return target.replace('*', key.slice(prefix.length, key.length - suffix.length));
+  }
+  return undefined;
+}
+
+/** Whether an `exports` map covers `subpath` at all, exactly or through a `*` key. */
+function hasExportKey(exports: Record<string, unknown> | undefined, subpath: string): boolean {
+  return exportTypesTarget(exports, subpath) !== undefined || exports?.[exportKey(subpath)] !== undefined;
+}
+
 /** The entry file for a subpath from an already-parsed `exports` map. */
 function entryFileFromExports(exports: Record<string, unknown> | undefined, siblingDir: string, subpath: string): string | undefined {
-  const entry = exports?.[exportKey(subpath)];
-  const types = typeof entry === 'string' ? entry : isRecord(entry) && typeof entry.types === 'string' ? entry.types : undefined;
+  const types = exportTypesTarget(exports, subpath);
   if (types === undefined) return undefined;
   return `${siblingDir}/src/${types.replace(/^\.\/dist\//, '').replace(/\.d\.ts$/, '.ts')}`;
+}
+
+/**
+ * The source file a bare specifier resolves to, through the workspace
+ * package it names: the longest package-name prefix wins, and the rest
+ * is the subpath in that package's `exports` map (`*` keys included),
+ * mapped from `dist/` to `src/` the same way. `readFile` reads a repo
+ * path at the version being verified, so a tag read resolves against
+ * the tag's manifests. Undefined when the specifier names no package
+ * in `packageDirs`, or that package has no such export.
+ */
+export function resolveWorkspaceSpecifier(
+  readFile: (path: string) => string | undefined,
+  packageDirs: ReadonlyMap<string, string>,
+  specifier: string,
+): string | undefined {
+  let matchedName: string | undefined;
+  let matchedDir: string | undefined;
+  for (const [name, dir] of packageDirs) {
+    if ((specifier === name || specifier.startsWith(`${name}/`)) && (matchedName === undefined || name.length > matchedName.length)) {
+      matchedName = name;
+      matchedDir = dir;
+    }
+  }
+  if (matchedName === undefined || matchedDir === undefined) return undefined;
+  const manifest = readFile(`${matchedDir}/package.json`);
+  if (manifest === undefined) return undefined;
+  const rest = specifier.slice(matchedName.length);
+  const subpath = rest === '' ? '' : rest.slice(1);
+  return subpathEntryFile(manifest, matchedDir, subpath);
 }
 
 /**
@@ -393,6 +469,7 @@ export function tagExportsAt(
   readFile: (path: string) => string | undefined,
   siblingDir: string,
   subpath: string,
+  resolveBare?: BareSpecifierResolver,
 ): TagExports | undefined {
   const manifest = readFile(`${siblingDir}/package.json`);
   if (manifest === undefined) return undefined;
@@ -403,8 +480,8 @@ export function tagExportsAt(
     return undefined;
   }
   const entry = entryFileFromExports(exports, siblingDir, subpath);
-  if (entry !== undefined) return resolveEntryExports(readFile, entry);
-  if (exports?.[exportKey(subpath)] !== undefined) return undefined;
+  if (entry !== undefined) return resolveEntryExports(readFile, entry, resolveBare);
+  if (hasExportKey(exports, subpath)) return undefined;
   return 'missing';
 }
 

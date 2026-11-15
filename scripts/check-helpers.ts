@@ -89,3 +89,16 @@ export function pendingChangesets(): { file: string; changeset: ReturnType<typeo
     .toSorted();
   return files.map((file) => ({ file, changeset: parseChangesetFile(readFileSync(join(dir, file), 'utf8')) }));
 }
+
+/** The changesets `fixed` groups from `.changeset/config.json`: packages that release at one version. Empty when the config cannot be read or names none. */
+export function fixedGroups(): string[][] {
+  try {
+    const config = JSON.parse(readFileSync(join(REPO_ROOT, '.changeset', 'config.json'), 'utf8')) as { fixed?: unknown };
+    if (!Array.isArray(config.fixed)) return [];
+    return config.fixed.filter(
+      (group): group is string[] => Array.isArray(group) && group.every((name) => typeof name === 'string'),
+    );
+  } catch {
+    return [];
+  }
+}

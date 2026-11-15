@@ -17,6 +17,7 @@
  */
 
 import { relative } from 'node:path';
+import { compareVersions, parseVersion, type Semver } from './changeset-bumps.ts';
 import { REPO_ROOT, isWidePeerRange, type PackageManifest } from './public-packages.ts';
 
 export interface PublicPackage {
@@ -81,4 +82,28 @@ export function peerRangeProblems(
     }
   }
   return problems;
+}
+
+/**
+ * The version each member of a changesets `fixed` group will release at:
+ * a fixed group releases every member at one version, the highest next
+ * version any member's pending bump computes. Mutates `nextVersions` in
+ * place, setting every group member to that version, including one with
+ * no pending bump of its own: the group releases it alongside the bumped
+ * member. A group with no member in `nextVersions` is left alone.
+ */
+export function applyFixedGroups(nextVersions: Map<string, string>, fixedGroups: readonly (readonly string[])[]): void {
+  for (const group of fixedGroups) {
+    let max: Semver | undefined;
+    for (const name of group) {
+      const version = nextVersions.get(name);
+      if (version === undefined) continue;
+      const parsed = parseVersion(version);
+      if (parsed === undefined) continue;
+      if (max === undefined || compareVersions(parsed, max) > 0) max = parsed;
+    }
+    if (max === undefined) continue;
+    const release = max.join('.');
+    for (const name of group) nextVersions.set(name, release);
+  }
 }

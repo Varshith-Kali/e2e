@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { peerFloor, peerRangeProblems, releasedVersions, type PublicPackage } from './peer-ranges.ts';
+import { applyFixedGroups, peerFloor, peerRangeProblems, releasedVersions, type PublicPackage } from './peer-ranges.ts';
 
 function pkg(name: string, peers: Record<string, string>): PublicPackage {
   return { path: `/repo/packages/${name}/package.json`, manifest: { name, version: '0.1.0', peerDependencies: peers } };
@@ -87,5 +87,43 @@ describe('peerRangeProblems', () => {
   it('ignores peers that are not siblings', () => {
     const packages = [pkg('@e2e-dev/web', { e2e: '>=9.9.9 <1', zod: '^3.0.0' })];
     assert.deepEqual(peerRangeProblems(packages, read), []);
+  });
+});
+
+describe('applyFixedGroups', () => {
+  it('releases every group member at the highest pending version', () => {
+    // e2e and @e2e-dev/core are a fixed group: the core package's first
+    // release is the runner's next version, not a 0.0.1 patch of its own.
+    const nextVersions = new Map([
+      ['e2e', '0.23.2'],
+      ['@e2e-dev/core', '0.0.1'],
+    ]);
+    applyFixedGroups(nextVersions, [['e2e', '@e2e-dev/core']]);
+    assert.equal(nextVersions.get('e2e'), '0.23.2');
+    assert.equal(nextVersions.get('@e2e-dev/core'), '0.23.2');
+  });
+
+  it('releases an unbumped member alongside the bumped one', () => {
+    const nextVersions = new Map([['e2e', '0.23.2']]);
+    applyFixedGroups(nextVersions, [['e2e', '@e2e-dev/core']]);
+    assert.equal(nextVersions.get('@e2e-dev/core'), '0.23.2');
+  });
+
+  it('leaves a group with no pending member alone', () => {
+    const nextVersions = new Map([['@e2e-dev/web', '0.16.1']]);
+    applyFixedGroups(nextVersions, [['e2e', '@e2e-dev/core']]);
+    assert.equal(nextVersions.has('e2e'), false);
+    assert.equal(nextVersions.has('@e2e-dev/core'), false);
+    assert.equal(nextVersions.get('@e2e-dev/web'), '0.16.1');
+  });
+
+  it('lets a fixed-group floor pass peerRangeProblems for a sibling with no changelog yet', () => {
+    const packages = [pkg('e2e', {}), pkg('@e2e-dev/core', {}), pkg('@e2e-dev/web', { '@e2e-dev/core': '>=0.23.2 <1' })];
+    const nextVersions = new Map([
+      ['e2e', '0.23.2'],
+      ['@e2e-dev/core', '0.0.1'],
+    ]);
+    applyFixedGroups(nextVersions, [['e2e', '@e2e-dev/core']]);
+    assert.deepEqual(peerRangeProblems(packages, () => undefined, nextVersions), []);
   });
 });

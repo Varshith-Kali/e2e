@@ -50,7 +50,8 @@ export function parseVersion(version: string): Semver | undefined {
 }
 
 /** -1, 0, or 1, semver order on `x.y.z` triples. */
-function compareVersions(a: Semver, b: Semver): number {
+/** The version comparison: negative when `a` is older, 0 when equal, positive when newer. */
+export function compareVersions(a: Semver, b: Semver): number {
   const [aMajor, aMinor, aPatch] = a;
   const [bMajor, bMinor, bPatch] = b;
   if (aMajor !== bMajor) return aMajor < bMajor ? -1 : 1;
