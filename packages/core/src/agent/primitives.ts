@@ -233,8 +233,8 @@ interface GrammarToolSetup extends GrammarToolOptions {
    * Renders screens for the model and remembers what it has seen, so every
    * result after the first reports the changes rather than the whole tree.
    * Shared with the opening prompt by the built-in agent and with the session
-   * by `e2e mcp`; a fresh one per step otherwise, so the first look
-   * (`observe`) returns the whole screen.
+   * by `e2e mcp`; without one, the step's shared presenter, the same one the
+   * opening prompt uses.
    */
   readonly screen?: ScreenPresenter;
   /**
