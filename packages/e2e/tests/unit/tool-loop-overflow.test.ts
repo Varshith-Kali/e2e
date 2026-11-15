@@ -4,7 +4,7 @@ import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { projectTools } from '@e2e-dev/core/lib/agent/default-agent';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { resolveConfig } from '../../src/config/resolve-run.ts';
-import { defineEngine, type EngineHandle } from '@e2e-dev/core/lib/engine/index';
+import { defineEngine, type EngineHandle, type SemanticNode } from '@e2e-dev/core/lib/engine/index';
 import { createEngineSession } from '@e2e-dev/core/lib/engine/session';
 import { Deadline } from '@e2e-dev/core/lib/internal/time';
 import { AttemptBudget } from '@e2e-dev/core/lib/run/budget';
@@ -75,6 +75,32 @@ const changingBigScreen = (variant: () => number) =>
       ),
   });
 
+/** A dense page whose sidebar sits at the end, as the review's repro: about 900 nodes, the sidebar last, so the overflow clip cuts it off the screen a later fold would name. The rows change per model turn, never per capture: the observation feed re-captures until the screen settles, and a variant that moved on every capture would never settle. */
+const foldingBigScreen = (variant: () => number) =>
+  defineEngine({
+    name: 'fake',
+    version: '1',
+    spiVersion: 1,
+    observe: async () => {
+      const rows = Array.from({ length: 880 }, (_, i) => ({
+        ref: { id: `n${String(i)}`, revision: '' },
+        role: 'text',
+        name: `v${String(variant())} row ${String(i)} ${'x'.repeat(20)}`,
+      }));
+      const sidebar: SemanticNode = {
+        ref: { id: 'n900', revision: '' },
+        role: 'navigation',
+        name: 'Sidebar',
+        children: Array.from({ length: 12 }, (_, i) => ({
+          ref: { id: `n${String(901 + i)}`, revision: '' },
+          role: 'link',
+          name: `Item ${String(i + 1)}`,
+        })),
+      };
+      return snapshot([...rows, sidebar]);
+    },
+  });
+
 const OVERFLOW = 'prompt is too long: 300000 tokens > 200000 maximum';
 
 /** A read-only project tool, so the loop has a first turn to spend before the refusal. */
@@ -127,6 +153,41 @@ describe('tool loop context overflow', () => {
     // What was left to shrink is the newest screen, riding the second screenshot's result.
     expect(loopCalls[3]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");
     expect(loopCalls[3]!.lastToolResult).toContain('"type":"file"');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+    expect(step.metrics?.modelCalls).toBe(3);
+  });
+
+  it('lists the next screen in full after the overflow retry cut the screen its folds named', async () => {
+    let variant = 0;
+    const model = installFakeLoopModel(({ turn }) => {
+      variant = turn;
+      if (turn === 1) return [{ toolName: 'observe', input: {} }];
+      if (turn === 2) throw new Error(OVERFLOW);
+      if (turn === 3) return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+    });
+    const { fixtures, steps } = runtime(foldingBigScreen(() => variant), { agents: { default: { model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(4);
+    // The second look folded the sidebar against the opening screen. The
+    // revision it names is whatever the settling captures minted, so the
+    // test reads it off the fold line instead of assuming b1.
+    const folded = loopCalls[1]!.lastToolResult;
+    const dependency = /\(\d+ nodes inside, unchanged since revision (b\d+)\)/.exec(folded)?.[1];
+    expect(dependency).toMatch(/^b\d+$/);
+    // The retry cut the opening screen's tail, sidebar included, and the
+    // second screen's fold line with it.
+    expect(loopCalls[2]!.prompt).toContain("more characters cut: the request exceeded the model's context window");
+    expect(loopCalls[2]!.prompt).not.toContain('link "Item 1"');
+    // The next look lists the sidebar in full instead of folding against a
+    // screen the model no longer holds whole.
+    const next = loopCalls[3]!.lastToolResult;
+    expect(next).toMatch(/Current screen \(revision b\d+/);
+    expect(next).toContain('#n901 link "Item 1"');
+    expect(next).not.toContain('unchanged since revision');
     const step = steps.all()[0]!;
     expect(step.status).toBe('passed');
     expect(step.metrics?.modelCalls).toBe(3);

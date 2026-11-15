@@ -196,6 +196,28 @@ describe('compactScreenHistory', () => {
     expect(compacted[3]).toEqual(messages[3]);
   });
 
+  it('keeps a depended-on screen that arrived as a plain-text tool result', () => {
+    const messages = [
+      opening,
+      fullScreenResult('c1', 'b1'),
+      fullScreenResult('c2', 'b2'),
+      fullScreenResult('c3', 'b2a'),
+      foldedScreenResult('c4', 'b3', 'b2'),
+    ];
+    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
+    expect(compacted).not.toBe(messages);
+    // The sidebar was last listed in full by the b2 text result, so b3's
+    // fold names b2 and that result stays verbatim. The screen after b2
+    // keeps the rewrite budget alive past it, so the keep-check on the text
+    // result is actually exercised: without it, b2 would be elided and b2a
+    // would survive instead.
+    expect(compacted[0]!.content).toContain('[earlier screen elided');
+    expect(toolOutput(compacted[1]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
+    expect(compacted[2]).toBe(messages[2]);
+    expect(toolOutput(compacted[3]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
+    expect(compacted[4]).toBe(messages[4]);
+  });
+
   it('elides a screen no surviving fold depends on, even when it is the oldest', () => {
     const messages = [
       opening,

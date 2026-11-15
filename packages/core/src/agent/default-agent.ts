@@ -65,6 +65,11 @@ function presenterFor(context: StepExecutorContext): ScreenPresenter {
   return presenter;
 }
 
+/** Drops the fold records of the step's presenter, if it has one: the overflow retry may have cut the screens they name. */
+function clearPresenterFolds(context: StepExecutorContext): void {
+  presenters.get(context)?.clearFoldRecords();
+}
+
 /** What the built-in agent is built from: an agents entry's `system` and its validated `tools`. */
 export interface BuiltInAgentOptions {
   /** Appended to the built-in execution rules; read by act and exploring assert loops. */
@@ -90,6 +95,7 @@ function createActLoop(options: BuiltInAgentOptions): StepExecutor {
     ...BUILT_IN_AGENT,
     system: rules(BASE_RULES, options.system),
     prepareMessages: (messages) => compactScreenshotHistory(compactScreenHistory(messages)),
+    onOverflowShrink: clearPresenterFolds,
     tools: (context, helpers) => loopTools(context, helpers, options.tools),
     buildPrompt: async (context) => {
       // The opening look is tree-only, unless no listed interactive node

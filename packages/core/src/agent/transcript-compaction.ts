@@ -11,7 +11,7 @@
  */
 
 import type { FilePart, ModelMessage, TextPart, ToolResultPart, UserContent } from 'ai';
-import { FOLD_DEPENDENCY_PATTERN, FULL_SCREEN_PATTERN, toolResultTexts } from './screen-update.ts';
+import { FOLD_DEPENDENCY_PATTERN, FULL_SCREEN_PATTERN, SCREEN_REVISION_PATTERN, toolResultTexts } from './screen-update.ts';
 
 /** A part of a user message; a string message counts as one text part. */
 type UserPart = Exclude<UserContent, string>[number];
@@ -94,12 +94,12 @@ const FULL_SCREEN_PRESERVE_COUNT = 1;
 
 /** The revision a full screen's heading carries, or undefined when it carries none. */
 function screenRevision(text: string): string | undefined {
-  return /Current screen \(revision ([^,)]+),/.exec(text)?.[1];
+  return SCREEN_REVISION_PATTERN.exec(text)?.[1];
 }
 
-/** The revisions a full screen's fold lines depend on. */
+/** The revisions a full screen's fold lines depend on. The exported pattern carries no `/g`, so the global copy for `matchAll` is built here. */
 function foldDependencies(text: string): string[] {
-  return [...text.matchAll(FOLD_DEPENDENCY_PATTERN)].map((match) => match[1]!);
+  return [...text.matchAll(new RegExp(FOLD_DEPENDENCY_PATTERN, 'g'))].map((match) => match[1]!);
 }
 
 /**

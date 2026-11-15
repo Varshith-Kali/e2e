@@ -189,6 +189,14 @@ export interface ToolLoopExecutorOptions {
    */
   readonly providerOptions?: ProviderOptions;
   /**
+   * Called when a context-overflow retry shrinks the history and resends it:
+   * the screens the presenter recorded as listed in full may have been cut
+   * to their head, so the executor forgets what it recorded and the next
+   * screen renders in full instead of folding against text the model no
+   * longer holds. Receives the step's context.
+   */
+  readonly onOverflowShrink?: (context: StepExecutorContext) => void;
+  /**
    * Between-turn history preparation: compaction, and anything the executor
    * wants the model to read before its next turn. Runs before the loop's own
    * notices; the returned history carries forward to later turns.
@@ -695,6 +703,7 @@ class LoopRun {
     }
     this.overflowNote = ' again after the history was shrunk once';
     this.turnOffset = this.turnsUsed;
+    this.options.onOverflowShrink?.(this.context);
     this.note(`context overflow before turn ${String(this.turnsUsed + 1)}: history shrunk from ${String(before)} to ${String(after)} chars, retrying once`);
     return shrunk;
   }
