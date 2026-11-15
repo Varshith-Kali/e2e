@@ -389,11 +389,12 @@ export class ScreenPresenter {
 }
 
 /**
- * One presenter per dispatched step, shared by the opening prompt and the
- * grammar tools. A loop run binds a fresh one at the start of its run, so
- * the presenter state matches that run's transcript alone: two loops run
- * against one step context each see their own first screen. Keyed by the
- * step's context object, so a step's presenter dies with it.
+ * One presenter per loop run, bound to the step's context for the run and
+ * restored after it, so the presenter state matches that run's transcript
+ * alone: two loops run against one step context each see their own first
+ * screen. Tools built outside a run read the binding while one is in
+ * progress, else use a presenter of their own. Keyed by the step's context
+ * object, so a run's presenter dies with it.
  */
 const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
 
@@ -407,16 +408,32 @@ export function presenterFor(context: StepExecutorContext): ScreenPresenter {
   return presenter;
 }
 
+/** The presenter bound to the step's context, if a loop run bound one: reads only, never creates. */
+export function boundPresenter(context: StepExecutorContext): ScreenPresenter | undefined {
+  return presenters.get(context);
+}
+
 /**
- * Binds a fresh presenter to the step's context, replacing whatever it held:
- * a loop run owns the transcript, not the step context, so each run starts
- * from a screen its own model has seen. `presenterFor` stays the fallback
- * for tools used outside a loop.
+ * Binds a fresh presenter to the step's context, replacing whatever it held,
+ * and returns it. A loop run binds one at the start of its run, so each run
+ * starts from a screen its own model has seen, and restores the previous
+ * binding when the run ends. `presenterFor` stays the fallback for the
+ * opening prompt inside a run.
  */
 export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
   const presenter = new ScreenPresenter();
   presenters.set(context, presenter);
   return presenter;
+}
+
+/**
+ * Restores the binding a loop run replaced when the run ends, or drops the
+ * entry when there was none, so tools built outside a loop never share a
+ * run's presenter.
+ */
+export function restorePresenter(context: StepExecutorContext, previous: ScreenPresenter | undefined): void {
+  if (previous === undefined) presenters.delete(context);
+  else presenters.set(context, previous);
 }
 
 /** The line under a screenshot: its pixel size and the coordinate space the point verbs read. */

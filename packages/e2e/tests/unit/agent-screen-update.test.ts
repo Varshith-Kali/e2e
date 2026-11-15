@@ -478,6 +478,30 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     expect(text).toContain(' #n3 link "Item 1"');
   });
 
+  it('does not let a fold swallow lines past a marker line inside the subtree', () => {
+    const presenter = new ScreenPresenter();
+    // A marker line with no node id sits inside the sidebar, between its
+    // eleventh and twelfth links: it closes the sidebar's span there.
+    const sidebarWithMarker = [
+      ' #n2 navigation "Sidebar"',
+      ...Array.from({ length: 11 }, (_, i) => `  #n${String(i + 3)} link "Item ${String(i + 1)}"`),
+      '  [End of visible items]',
+      '  #n14 link "Item 12"',
+    ];
+    presenter.initial(screen('b1', ['#n1 document "Orders"', ...sidebarWithMarker, ...MAIN_LIST]));
+    const text = presenter.update(
+      screen('b2', ['#n1 document "Orders"', ...sidebarWithMarker, ...MAIN_DETAILS]),
+      { lead: 'Tapped #n22.' },
+    );
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    // The fold covers only the eleven links before the marker.
+    expect(text).toContain(' #n2 navigation "Sidebar" (11 nodes inside, unchanged since revision b1)');
+    expect(text).not.toContain('#n3 link "Item 1"');
+    // The marker and the link past it are still listed in full.
+    expect(text).toContain('  [End of visible items]');
+    expect(text).toContain(' #n14 link "Item 12"');
+  });
+
   it('sends the first screen whole, with no folding', () => {
     const presenter = new ScreenPresenter();
     const text = presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));

@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { bindPresenter, isScreenOutput, reportsNoEffect, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
+import { bindPresenter, boundPresenter, isScreenOutput, reportsNoEffect, restorePresenter, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -353,11 +353,19 @@ class LoopRun {
   }
 
   async run(): Promise<StepVerdict> {
-    // A fresh presenter per run: the transcript belongs to this loop, not
-    // the step context, so a second loop run against the same context
-    // starts from a screen its own model has seen. Bound before the tools
-    // and the opening prompt, which both read it through `presenterFor`.
+    // A fresh presenter per run, restored after it: the transcript belongs to this loop, not the step context.
+    const previous = boundPresenter(this.context);
     this.presenter = bindPresenter(this.context);
+    try {
+      return await this.runLoop();
+    } finally {
+      restorePresenter(this.context, previous);
+      this.presenter = undefined;
+    }
+  }
+
+  /** The loop itself: tools, opening prompt, and model turns until a verdict. */
+  private async runLoop(): Promise<StepVerdict> {
     const helpers = this.helpers();
     this.executorTools = this.options.tools(this.context, helpers);
     const tools: ToolSet = {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { projectTools } from '@e2e-dev/core/lib/agent/default-agent';
-import type { StepExecutor } from '@e2e-dev/core/lib/agent/executor';
+import type { StepExecutor, StepExecutorContext } from '@e2e-dev/core/lib/agent/executor';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { resolveConfig } from '../../src/config/resolve-run.ts';
 import { defineEngine, type EngineHandle, type SemanticNode } from '@e2e-dev/core/lib/engine/index';
@@ -107,6 +107,16 @@ const OVERFLOW = 'prompt is too long: 300000 tokens > 200000 maximum';
 
 /** A read-only project tool, so the loop has a first turn to spend before the refusal. */
 const peek = defineTool({ inputSchema: z.object({}), execute: async () => 'looked' }, { mutates: false });
+
+/** The text of one direct `observe` call on a toolset built from the context, outside any loop. */
+async function observeDirectly(context: StepExecutorContext): Promise<string> {
+  const tools = createGrammarTools(context);
+  const observe = tools.observe;
+  if (observe?.execute === undefined) throw new Error('no observe tool');
+  // The ToolSet type erases each tool's input to never; observe takes no input.
+  const output = await observe.execute({} as never, { toolCallId: 'observe', messages: [], context: undefined });
+  return typeof output === 'string' ? output : output.text;
+}
 
 describe('tool loop context overflow', () => {
   it.each(['act', 'assert'] as const)('shrinks overflow history for a %s loop unless inconclusiveOnOverflow is set', async kind => {
@@ -278,6 +288,78 @@ describe('tool loop context overflow', () => {
     expect(loopBFirst).toMatch(/Current screen \(revision b\d+/);
     expect(loopBFirst).toContain('#n901 link "Item 1"');
     expect(loopBFirst).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+  });
+
+  it('gives each toolset built outside a loop its own first screen', async () => {
+    let first: string | undefined;
+    let second: string | undefined;
+    // The review's repro: a custom runStep builds createGrammarTools twice,
+    // once per model call, and calls observe on each. The screen never
+    // changes, so a presenter shared across the toolsets would answer the
+    // second look with the screen the first toolset already showed.
+    const executor: StepExecutor = {
+      name: 'two-toolsets',
+      runStep: async (context) => {
+        first = await observeDirectly(context);
+        second = await observeDirectly(context);
+        return { status: 'passed', summary: 'read the sidebar twice' };
+      },
+    };
+    const model = installFakeLoopModel(() => [{ toolName: 'complete_step', input: { status: 'passed', summary: 'unused' } }]);
+    const { fixtures, steps } = runtime(foldingBigScreen(() => 0), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(0);
+    // Each toolset's first look lists the sidebar in full, as its own first
+    // screen, instead of reporting the other toolset's screen unchanged.
+    for (const look of [first, second]) {
+      expect(look).toMatch(/Current screen \(revision b\d+/);
+      expect(look).toContain('#n901 link "Item 1"');
+      expect(look).not.toContain('unchanged since revision');
+    }
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+  });
+
+  it('gives tools built after a loop run their own first screen', async () => {
+    let after: string | undefined;
+    const model = installFakeLoopModel(({ turn }) => {
+      if (turn === 1) return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop read the sidebar' } }];
+    });
+    // The review's second repro: a loop run, then createGrammarTools built
+    // from the same step context and observed. The screen never changes, so
+    // a presenter shared with the run would answer with the screen the
+    // loop's model already holds.
+    const loop = () =>
+      createToolLoopExecutor({
+        name: 'custom-loop',
+        tools: (context) => createGrammarTools(context),
+        buildPrompt: () => 'read the big output',
+      });
+    const executor: StepExecutor = {
+      name: 'loop-then-tools',
+      runStep: async (context) => {
+        const verdict = await loop().runStep(context);
+        after = await observeDirectly(context);
+        return verdict;
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => 0), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(2);
+    // The loop's first look listed the sidebar in full.
+    expect(loopCalls[1]!.lastToolResult).toContain('#n901 link "Item 1"');
+    expect(loopCalls[1]!.lastToolResult).not.toContain('unchanged since revision');
+    // The tools built after the run get their own first screen.
+    expect(after).toMatch(/Current screen \(revision b\d+/);
+    expect(after).toContain('#n901 link "Item 1"');
+    expect(after).not.toContain('unchanged since revision');
     const step = steps.all()[0]!;
     expect(step.status).toBe('passed');
   });
