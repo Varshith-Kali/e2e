@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
 import { collectEngineImports, nextReleaseVersions, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
+import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
   it('names the file that fails to parse', () => {
@@ -32,8 +33,18 @@ describe('workspacePackages', () => {
   it('reads the workspace packages with their versions', () => {
     const packages = workspacePackages();
     const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
-    assert.equal(byName.get('e2e'), '0.23.1');
-    assert.equal(byName.get('@e2e-dev/core'), '0.0.0');
+    // Compare against each package's own manifest, not pinned versions:
+    // the next Version Packages run bumps both, and a pinned version
+    // here would fail there. The check still bites: a helper that drops
+    // a package, or reads a wrong version for one, fails against its
+    // own manifest.
+    for (const dir of ['e2e', 'core']) {
+      const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'packages', dir, 'package.json'), 'utf8')) as {
+        name: string;
+        version: string;
+      };
+      assert.equal(byName.get(manifest.name), manifest.version);
+    }
   });
 });
 
