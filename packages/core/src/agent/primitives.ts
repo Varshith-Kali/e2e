@@ -26,7 +26,7 @@ import { markWaitingTool } from './loop-guards.ts';
 import { OperationQueue } from './operation-queue.ts';
 import { imagePointToViewport, POINT_VERBS } from './point-tap.ts';
 import { SAMPLE_NAMES, SAMPLE_PREFIX } from './sample-files.ts';
-import { ScreenPresenter, boundPresenter, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
+import { ScreenPresenter, boundPresenter, registerPresenter, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
 
 /** Codes the model may pick when concluding; runtime codes are runtime-assigned. */
 const MODEL_ERROR_CODES = [
@@ -934,8 +934,11 @@ function verbKit(context: StepExecutorContext, options: GrammarToolSetup) {
   const guard = options.guard ?? (<T>(body: () => Promise<T>) => body());
   // No presenter of its own: the loop run's when built inside one, else a
   // fresh presenter per toolset, so tools used outside a loop never share
-  // screen state with a run or with each other.
+  // screen state with a run or with each other. Registered for the step
+  // context, so a loop overflow clears its folds even when the toolset was
+  // built before the run.
   const screen: ScreenPresenter = options.screen ?? boundPresenter(context) ?? new ScreenPresenter();
+  registerPresenter(context, screen);
   const queue = new OperationQueue();
   const inOrder = <T>(body: () => Promise<T>): Promise<T> => queue.run(body);
   /** The screen after an action: the changes since the one the model holds and, once the step shows pixels, a fresh screenshot. */

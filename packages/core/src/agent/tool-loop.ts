@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { bindPresenter, isScreenOutput, reportsNoEffect, restorePresenter, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
+import { bindPresenter, clearFoldRecordsFor, isScreenOutput, reportsNoEffect, toolResultTexts, unbindPresenter } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -285,8 +285,6 @@ class LoopRun {
    * verdict, and the note completes its message.
    */
   private overflowNote: string | undefined;
-  /** The presenter this run bound for its context, so a shrink clears this run's folds, never another run's. */
-  private presenter: ScreenPresenter | undefined;
   /** How this step asks for tool calls; flips to `auto` when the model rejects a forced choice. */
   private toolChoice: ToolChoiceMode;
   /** The last turn that ran, for continuing after a reply without tool calls. */
@@ -358,12 +356,10 @@ class LoopRun {
     // while another run on this context is still going leaves that run's
     // presenter in place and never puts back one whose run is over.
     const presenter = bindPresenter(this.context);
-    this.presenter = presenter;
     try {
       return await this.runLoop();
     } finally {
-      restorePresenter(this.context, presenter);
-      this.presenter = undefined;
+      unbindPresenter(this.context, presenter);
     }
   }
 
@@ -713,8 +709,10 @@ class LoopRun {
     }
     this.overflowNote = ' again after the history was shrunk once';
     this.turnOffset = this.turnsUsed;
-    // The retry may have cut the screens this run's folds name, so the next screen renders in full.
-    this.presenter?.clearFoldRecords();
+    // The retry may have cut the screens this run's folds name, so the next screen renders in full. The clear
+    // covers every presenter that rendered for this step context: the run's own and the presenters its tools
+    // render through, including a toolset built before the run.
+    clearFoldRecordsFor(this.context);
     this.note(`context overflow before turn ${String(this.turnsUsed + 1)}: history shrunk from ${String(before)} to ${String(after)} chars, retrying once`);
     return shrunk;
   }

@@ -16,7 +16,7 @@ import type { ExecutorObservation, ExecutorObserveOptions, ReplayedPrefix, StepE
 import { interactiveNodeCount } from './observation.ts';
 import { testTitleLine } from './prompts.ts';
 import { grammarTools } from './primitives.ts';
-import { boundPresenter, presenterFor, type ScreenPresenter } from './screen-update.ts';
+import { presenterFor, type ScreenPresenter } from './screen-update.ts';
 import { compactScreenHistory, compactScreenshotHistory } from './transcript-compaction.ts';
 import { createToolLoopExecutor, type ToolLoopHelpers } from './tool-loop.ts';
 import { toolAppliesTo, withToolContext } from './tool.ts';
@@ -84,7 +84,7 @@ function createActLoop(options: BuiltInAgentOptions): StepExecutor {
       // this context may bind its own presenter while this one waits on
       // observe, and the opening prompt must read this run's, not the other
       // run's.
-      const presenter = boundPresenter(context) ?? presenterFor(context);
+      const presenter = presenterFor(context);
       // The opening look is tree-only, unless no listed interactive node
       // exists at all: then the opening prompt carries a screenshot, because the tree describes a canvas, a game,
       // or a semantics-free native screen too poorly to act on, and the model
@@ -117,7 +117,7 @@ function createAssertionLoop(options: BuiltInAgentOptions): StepExecutor {
     tools: (context, helpers) => loopTools(context, helpers, options.tools),
     buildPrompt: async (context) => {
       // The run's presenter is read before the first await, as the act loop does.
-      const presenter = boundPresenter(context) ?? presenterFor(context);
+      const presenter = presenterFor(context);
       return openingPrompt(context, `Judge whether this assertion holds: ${context.step.instruction}`, [], await context.observe(), presenter);
     },
   });

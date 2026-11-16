@@ -399,12 +399,46 @@ export class ScreenPresenter {
 const presenterStacks = new WeakMap<StepExecutorContext, ScreenPresenter[]>();
 
 /**
+ * Every presenter that renders a screen for a step context: the loop runs'
+ * bound presenters and the presenters the grammar tools render through, so
+ * an overflow shrink can forget the folds of each one. Keyed by the step's
+ * context object, so the entries die with it.
+ */
+const presentersByContext = new WeakMap<StepExecutorContext, Set<ScreenPresenter>>();
+
+/** Remembers a presenter as one that renders screens for the step context. */
+export function registerPresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
+  let presenters = presentersByContext.get(context);
+  if (presenters === undefined) {
+    presenters = new Set();
+    presentersByContext.set(context, presenters);
+  }
+  presenters.add(presenter);
+}
+
+/**
+ * Forgets the folds of every presenter that rendered a screen for the step
+ * context: the run's own presenter and the presenters its tools render
+ * through, including a toolset built before the run. The shrink cuts the
+ * screens those records name, so the next screen renders in full. A run
+ * that shares the context only loses its folds, never its screen: its next
+ * look lists a folded subtree in full once, which is always correct.
+ */
+export function clearFoldRecordsFor(context: StepExecutorContext): void {
+  for (const presenter of presentersByContext.get(context) ?? []) presenter.clearFoldRecords();
+}
+
+/**
  * The loop run's presenter, or a fresh presenter of its own when no run
  * bound one: the opening prompt inside a run reads the run's presenter, and
  * a prompt built outside a run never shares screen state with one.
  */
 export function presenterFor(context: StepExecutorContext): ScreenPresenter {
-  return boundPresenter(context) ?? new ScreenPresenter();
+  const bound = boundPresenter(context);
+  if (bound !== undefined) return bound;
+  const presenter = new ScreenPresenter();
+  registerPresenter(context, presenter);
+  return presenter;
 }
 
 /** The presenter the innermost loop run bound to the step's context, if one bound one: reads only, never creates. */
@@ -421,6 +455,7 @@ export function boundPresenter(context: StepExecutorContext): ScreenPresenter | 
  */
 export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
   const presenter = new ScreenPresenter();
+  registerPresenter(context, presenter);
   const stack = presenterStacks.get(context);
   if (stack === undefined) presenterStacks.set(context, [presenter]);
   else stack.push(presenter);
@@ -434,7 +469,7 @@ export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
  * run never puts back a presenter whose run is over. Tools built outside a
  * loop then find no binding and use a presenter of their own.
  */
-export function restorePresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
+export function unbindPresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
   const stack = presenterStacks.get(context);
   if (stack === undefined) return;
   const index = stack.lastIndexOf(presenter);

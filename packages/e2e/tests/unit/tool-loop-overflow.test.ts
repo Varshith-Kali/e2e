@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
-import { projectTools } from '@e2e-dev/core/lib/agent/default-agent';
+import { createBuiltInAgent, projectTools } from '@e2e-dev/core/lib/agent/default-agent';
 import type { StepExecutor, StepExecutorContext } from '@e2e-dev/core/lib/agent/executor';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { resolveConfig } from '../../src/config/resolve-run.ts';
@@ -102,6 +102,43 @@ const foldingBigScreen = (variant: () => number) =>
       return snapshot([...rows, sidebar]);
     },
   });
+
+/** A dense page with no interactive node, as a canvas-like screen is: the built-in act loop then looks twice, the second time asking for pixels, so the two opening renders of overlapping runs interleave. The rows change per variant; the sidebar is plain text, so it can fold. */
+/** A dense page for the overlapping-opening-prompts test. The first look
+ * returns a sidebar of plain text, so the act loop's opening look finds no
+ * interactive node and looks a second time asking for pixels; every later
+ * look returns the sidebar as links. The first run therefore renders its
+ * opening after the second run's, which is what lets a presenter read after
+ * the first await overwrite the second run's fold record. The rows change
+ * per variant; the sidebar never does, so it can fold. */
+const foldingStillScreen = (variant: () => number) => {
+  let calls = 0;
+  return defineEngine({
+    name: 'fake',
+    version: '1',
+    spiVersion: 1,
+    observe: async () => {
+      calls += 1;
+      const links = calls > 2;
+      const rows = Array.from({ length: 880 }, (_, i) => ({
+        ref: { id: `n${String(i)}`, revision: '' },
+        role: 'text',
+        name: `v${String(variant())} row ${String(i)} ${'x'.repeat(20)}`,
+      }));
+      const sidebar: SemanticNode = {
+        ref: { id: 'n900', revision: '' },
+        role: 'navigation',
+        name: 'Sidebar',
+        children: Array.from({ length: 12 }, (_, i) => ({
+          ref: { id: `n${String(901 + i)}`, revision: '' },
+          role: links ? 'link' : 'text',
+          name: `Item ${String(i + 1)}`,
+        })),
+      };
+      return snapshot([...rows, sidebar]);
+    },
+  });
+};
 
 const OVERFLOW = 'prompt is too long: 300000 tokens > 200000 maximum';
 
@@ -248,6 +285,61 @@ describe('tool loop context overflow', () => {
     expect(step.metrics?.modelCalls).toBe(3);
   });
 
+  it('lists the next screen in full after the overflow retry cut the screen its folds named, for tools built before the loop run', async () => {
+    let variant = 0;
+    const model = installFakeLoopModel(({ turn }) => {
+      variant = turn;
+      if (turn === 1) return [{ toolName: 'observe', input: {} }];
+      if (turn === 2) return [{ toolName: 'observe', input: {} }];
+      if (turn === 3) throw new Error(OVERFLOW);
+      if (turn === 4) return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+    });
+    // The review's repro: the custom executor builds the grammar tools from
+    // the step context before the loop run starts and hands the same set to
+    // the loop, so the tools keep a presenter of their own and the loop's
+    // overflow retry must clear its folds too.
+    const executor: StepExecutor = {
+      name: 'prebuilt-tools-loop',
+      runStep: async (context) => {
+        const tools = createGrammarTools(context);
+        const loop = createToolLoopExecutor({
+          name: 'custom-loop',
+          tools: () => tools,
+          buildPrompt: () => 'read the big output',
+        });
+        return loop.runStep(context);
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => variant), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(5);
+    // The first look listed the sidebar in full; the second look folded it
+    // against the opening screen, at whatever revision the settling
+    // captures minted.
+    const first = loopCalls[1]!.lastToolResult;
+    expect(first).toContain('#n901 link "Item 1"');
+    expect(first).not.toContain('unchanged since revision');
+    const folded = loopCalls[2]!.lastToolResult;
+    expect(folded).toContain('navigation "Sidebar" (12 nodes inside, unchanged since revision');
+    // The retry cut the opening screen's tail, sidebar included: the
+    // opening prompt carries no screen here, so the cut shows in the
+    // observe result the retried request carries.
+    expect(loopCalls[3]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");
+    expect(loopCalls[3]!.lastToolResult).not.toContain('link "Item 1"');
+    // The next look lists the sidebar in full instead of folding against a
+    // screen the model no longer holds whole.
+    const next = loopCalls[4]!.lastToolResult;
+    expect(next).toMatch(/Current screen \(revision b\d+/);
+    expect(next).toContain('#n901 link "Item 1"');
+    expect(next).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+    expect(step.metrics?.modelCalls).toBe(4);
+  });
+
   it('gives a second custom loop sharing one step context its own first screen', async () => {
     const model = installFakeLoopModel(({ turn }) => {
       if (turn === 1) return [{ toolName: 'observe', input: {} }];
@@ -335,6 +427,72 @@ describe('tool loop context overflow', () => {
     expect(after).toMatch(/Current screen \(revision b\d+/);
     expect(after).toContain('#n901 link "Item 1"');
     expect(after).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+  });
+
+  it('gives a toolset built between two staggered concurrent runs the live run\'s presenter', async () => {
+    let variant = 0;
+    let resolveADone: (() => void) | undefined;
+    let resolveBSawNew: (() => void) | undefined;
+    const aDone = new Promise<void>((resolve) => {
+      resolveADone = resolve;
+    });
+    const bSawNew = new Promise<void>((resolve) => {
+      resolveBSawNew = resolve;
+    });
+    let releaseB = false;
+    let bTurns = 0;
+    // Content-scripted, not turn-scripted: the two runs interleave, so the
+    // build prompt tells them apart. Loop A observes once and ends; loop B
+    // keeps observing until the test releases it, so A ends while B is
+    // still live and the toolset is built in between.
+    const model = installFakeLoopModel((call) => {
+      if (call.prompt.includes('loop A')) {
+        if (call.lastToolResult === '') return [{ toolName: 'observe', input: {} }];
+        // The screen changes once A has seen it whole: B's presenter then
+        // holds the new screen while A's still holds the old one, so which
+        // presenter the toolset got is visible in its first look.
+        variant = 1;
+        resolveADone?.();
+        return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop A read the sidebar' } }];
+      }
+      bTurns += 1;
+      if (call.lastToolResult.includes('v1 row')) resolveBSawNew?.();
+      if (releaseB || bTurns > 50) return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop B read the sidebar' } }];
+      return [{ toolName: 'observe', input: {} }];
+    });
+    const loop = (label: string) =>
+      createToolLoopExecutor({
+        name: 'custom-loop',
+        tools: (context) => createGrammarTools(context),
+        buildPrompt: () => `read the big output, ${label}`,
+      });
+    let stepContext: StepExecutorContext | undefined;
+    let after: string | undefined;
+    const executor: StepExecutor = {
+      name: 'two-staggered-loops',
+      runStep: async (context) => {
+        stepContext = context;
+        const [first] = await Promise.all([loop('loop A').runStep(context), loop('loop B').runStep(context)]);
+        return first!;
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => variant), { agents: { default: { executor, model } } });
+
+    const run = fixtures.agent.act('read the big output');
+    await aDone;
+    await bSawNew;
+    // Loop A ended while loop B is still live: the toolset built now reads
+    // the live run's presenter, whose screen is the new one, so its first
+    // look reports the screen unchanged instead of listing it in full
+    // against the screen the ended run last showed.
+    after = await observeDirectly(stepContext!);
+    releaseB = true;
+    await run;
+
+    expect(after).toContain('Screen unchanged since revision');
+    expect(after).not.toContain('Current screen');
     const step = steps.all()[0]!;
     expect(step.status).toBe('passed');
   });
@@ -530,4 +688,101 @@ it('fails an overflow as inconclusive without shrinking the history when inconcl
   const { fixtures } = runtime(bigScreen(), { agents: { default: { model, executor } } });
   await expect(fixtures.agent.assert('inspect the evidence')).rejects.toMatchObject({ code: 'ASSERTION_INCONCLUSIVE' });
   expect(loopCalls).toHaveLength(1);
+});
+
+describe('built-in agent opening prompts', () => {
+  it.each(['act', 'assert'] as const)(
+    'gives each of two overlapping built-in %s runs its own opening prompt',
+    async (kind) => {
+      let variant = 0;
+      const seenFirst = new Set<string>();
+      let resolveBothOpened: (() => void) | undefined;
+      const bothOpened = new Promise<void>((resolve) => {
+        resolveBothOpened = resolve;
+      });
+      let lTurns = 0;
+      // The system line tells the runs apart: each run's model calls carry
+      // its own. Loop E starts first and completes once it has opened; loop
+      // L starts second and keeps observing. The first look returns a
+      // sidebar of plain text, so the act run's opening look finds no
+      // interactive node and looks a second time, after L has opened: if
+      // E read its presenter after its first look instead of before it,
+      // E's opening renders through L's presenter and overwrites L's fold
+      // record with E's revision. The screen then changes and L observes
+      // it again; that look folds the sidebar against the revision L's
+      // opening prompt showed, the one L's model holds.
+      const model = installFakeLoopModel((call) => {
+        if (call.system.includes('Loop E')) {
+          if (call.lastToolResult === '') seenFirst.add('E');
+          if (seenFirst.has('E') && seenFirst.has('L')) resolveBothOpened?.();
+          return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+        }
+        lTurns += 1;
+        if (call.lastToolResult === '') {
+          seenFirst.add('L');
+          if (seenFirst.has('E') && seenFirst.has('L')) resolveBothOpened?.();
+          return [{ toolName: 'observe', input: {} }];
+        }
+        if (variant === 1 && call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('unchanged since revision')) {
+          return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+        }
+        if (lTurns > 50) return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
+        return [{ toolName: 'observe', input: {} }];
+      });
+      const executor: StepExecutor = {
+        name: 'two-built-in-agents',
+        runStep: async (context) => {
+          const agentE = createBuiltInAgent({ system: 'Loop E.' });
+          const agentL = createBuiltInAgent({ system: 'Loop L.' });
+          const runs = Promise.all([agentE.runStep(context), agentL.runStep(context)]);
+          await bothOpened;
+          variant = 1;
+          const [first] = await runs;
+          return first!;
+        },
+      };
+      const { fixtures, steps } = runtime(foldingStillScreen(() => variant), { agents: { default: { executor, model } } });
+
+      await fixtures.agent[kind]('read the big output');
+
+      const lCalls = loopCalls.filter((call) => call.system.includes('Loop L'));
+      const eCalls = loopCalls.filter((call) => call.system.includes('Loop E'));
+      expect(lCalls.length).toBeGreaterThan(0);
+      expect(eCalls).toHaveLength(1);
+      const lOpening = lCalls[0]!.prompt;
+      const eOpening = eCalls[0]!.prompt;
+      // Each opening prompt lists the sidebar in full, as its own first
+      // screen, instead of reporting the screen the other run already showed.
+      // The act run's opening look is its second, pixels, look, so it lists
+      // the sidebar as links; the assert run's only look is the first, so
+      // its opening lists it as text.
+      expect(lOpening).toContain('Current screen (revision');
+      expect(lOpening).toContain('#n901 link "Item 1"');
+      expect(lOpening).not.toContain('unchanged since revision');
+      expect(eOpening).toContain('Current screen (revision');
+      expect(eOpening).toContain(kind === 'act' ? '#n901 link "Item 1"' : '#n901 text "Item 1"');
+      expect(eOpening).not.toContain('unchanged since revision');
+      const lRevision = /Current screen \(revision (b\d+)/.exec(lOpening)?.[1];
+      const eRevision = /Current screen \(revision (b\d+)/.exec(eOpening)?.[1];
+      expect(lRevision).toMatch(/^b\d+$/);
+      expect(eRevision).toMatch(/^b\d+$/);
+      expect(eRevision).not.toBe(lRevision);
+      if (kind === 'act') {
+        // The first run's opening look came after the second run's: its
+        // render could overwrite the second run's fold record. If this
+        // ever fails, the interleaving the test relies on has changed.
+        expect(Number(eRevision!.slice(1))).toBeGreaterThan(Number(lRevision!.slice(1)));
+      }
+      // The look after the screen changed folds the sidebar against the
+      // revision L's opening prompt showed, the one L's model holds.
+      const folded = lCalls.find(
+        (call) => call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('unchanged since revision'),
+      );
+      expect(folded).toBeDefined();
+      const foldRevision = /unchanged since revision (b\d+)/.exec(folded!.lastToolResult)?.[1];
+      expect(foldRevision).toBe(lRevision);
+      const step = steps.all()[0]!;
+      expect(step.status).toBe('passed');
+    },
+  );
 });
