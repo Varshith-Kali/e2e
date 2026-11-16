@@ -393,28 +393,70 @@ function entryTypesTarget(entry: unknown): string | undefined {
   return undefined;
 }
 
-/** The `types` target for `subpath` in an `exports` map: the exact key, or a `*` key whose pattern the subpath matches with the middle substituted. Undefined when no key covers it. */
-function exportTypesTarget(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
-  if (exports === undefined) return undefined;
+/**
+ * The `exports` keys covering `subpath`, best first: the exact key, then
+ * `*` keys by longest prefix before `*`, ties broken by longest key, the
+ * order Node resolves subpath patterns in. A `*` key covers the subpath
+ * only when the key is at least as long as the pattern (the `*` matches at
+ * least one character, so `./lib/` does not match `./lib/*`) and starts
+ * with the prefix and ends with the suffix.
+ */
+function coveringExportKeys(exports: Record<string, unknown> | undefined, subpath: string): string[] {
+  if (exports === undefined) return [];
   const key = exportKey(subpath);
-  const exact = entryTypesTarget(exports[key]);
-  if (exact !== undefined) return exact;
-  for (const [pattern, value] of Object.entries(exports)) {
+  if (exports[key] !== undefined) return [key];
+  const patterns: { pattern: string; prefix: string }[] = [];
+  for (const pattern of Object.keys(exports)) {
     const star = pattern.indexOf('*');
     if (star === -1) continue;
     const prefix = pattern.slice(0, star);
     const suffix = pattern.slice(star + 1);
-    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    const target = entryTypesTarget(value);
+    if (key.length < pattern.length || !key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    patterns.push({ pattern, prefix });
+  }
+  patterns.sort((a, b) => b.prefix.length - a.prefix.length || b.pattern.length - a.pattern.length);
+  return patterns.map(({ pattern }) => pattern);
+}
+
+/**
+ * The `types` target for `subpath` in an `exports` map, following Node's
+ * subpath-pattern rules: the exact key wins, then the best `*` key, and
+ * every `*` in the target is replaced by the matched middle. A `null`
+ * target excludes the subpath outright, even when a shorter key would
+ * match. A key whose target has no `types` entry, or no `*` to substitute
+ * a per-subpath file, falls through to the next covering key. Undefined
+ * when no key covers it, or the covering key excludes it.
+ */
+function exportTypesTarget(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
+  if (exports === undefined) return undefined;
+  const key = exportKey(subpath);
+  const exact = exports[key];
+  if (exact !== undefined) {
+    // The exact key wins outright: a null target excludes the subpath,
+    // and a plain string target names the entry file as it is.
+    if (exact === null) return undefined;
+    return entryTypesTarget(exact);
+  }
+  for (const pattern of coveringExportKeys(exports, subpath)) {
+    const entry = exports[pattern];
+    if (entry === null) return undefined;
+    const target = entryTypesTarget(entry);
+    // A pattern key with no `types` entry, or one that names no
+    // per-subpath file, falls through to the next covering key.
     if (target === undefined || !target.includes('*')) continue;
-    return target.replace('*', key.slice(prefix.length, key.length - suffix.length));
+    const star = pattern.indexOf('*');
+    const prefix = pattern.slice(0, star);
+    const suffix = pattern.slice(star + 1);
+    return target.replaceAll('*', key.slice(prefix.length, key.length - suffix.length));
   }
   return undefined;
 }
 
-/** Whether an `exports` map covers `subpath` at all, exactly or through a `*` key. */
+/** Whether an `exports` map covers `subpath` at all: an exact key or a `*` key, with a target that is not `null`. Only the best covering key counts: a `null` target on it excludes the subpath, even when a shorter key would match. */
 function hasExportKey(exports: Record<string, unknown> | undefined, subpath: string): boolean {
-  return exportTypesTarget(exports, subpath) !== undefined || exports?.[exportKey(subpath)] !== undefined;
+  if (exports === undefined) return false;
+  const [best] = coveringExportKeys(exports, subpath);
+  return best !== undefined && exports[best] !== null;
 }
 
 /** The entry file for a subpath from an already-parsed `exports` map. */
@@ -456,20 +498,24 @@ export function resolveWorkspaceSpecifier(
 
 /**
  * The export state of a sibling's subpath at a version. `readFile` reads a
- * repo path at that version. Undefined when the tag record cannot be read
- * (no manifest, unparseable manifest, unreadable entry). `'missing'` when
- * the record exists but the sibling does not export that subpath there:
- * every import from it is then a problem, not unverifiable. Empty sets
- * when the entry exists but exports nothing: a side-effect import of it
- * passes, a named import still fails on the name. An export entry with no
- * types target stays unverifiable, since no entry file can be found for
- * it that way.
+ * repo path at that version. `packageDirs` maps workspace package names to
+ * their directories: a bare `export *` into another workspace package is
+ * resolved through that package's manifest read by the same `readFile`,
+ * so the bare target is read at the same version as the tag lookup and
+ * the two reads cannot diverge. Undefined when the tag record cannot be
+ * read (no manifest, unparseable manifest, unreadable entry). `'missing'`
+ * when the record exists but the sibling does not export that subpath
+ * there: every import from it is then a problem, not unverifiable. Empty
+ * sets when the entry exists but exports nothing: a side-effect import of
+ * it passes, a named import still fails on the name. An export entry with
+ * no types target stays unverifiable, since no entry file can be found
+ * for it that way.
  */
 export function tagExportsAt(
   readFile: (path: string) => string | undefined,
   siblingDir: string,
   subpath: string,
-  resolveBare?: BareSpecifierResolver,
+  packageDirs?: ReadonlyMap<string, string>,
 ): TagExports | undefined {
   const manifest = readFile(`${siblingDir}/package.json`);
   if (manifest === undefined) return undefined;
@@ -480,6 +526,8 @@ export function tagExportsAt(
     return undefined;
   }
   const entry = entryFileFromExports(exports, siblingDir, subpath);
+  const resolveBare: BareSpecifierResolver | undefined =
+    packageDirs === undefined ? undefined : (specifier: string): string | undefined => resolveWorkspaceSpecifier(readFile, packageDirs, specifier);
   if (entry !== undefined) return resolveEntryExports(readFile, entry, resolveBare);
   if (hasExportKey(exports, subpath)) return undefined;
   return 'missing';

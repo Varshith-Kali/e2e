@@ -329,6 +329,43 @@ describe('exportedNames and resolveEntryExports', () => {
     assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/types'), 'packages/core/src/types.ts');
   });
 
+  it('prefers the longest wildcard prefix, like Node', () => {
+    // In insertion order the short key comes first; Node still picks
+    // ./lib/agent/* for lib/agent/public, not ./lib/*.
+    const packageJson = JSON.stringify({
+      exports: {
+        './lib/*': { types: './dist/lib/*.d.ts', default: './dist/lib/*.js' },
+        './lib/agent/*': { types: './dist/agent/*.d.ts', default: './dist/agent/*.js' },
+      },
+    });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/agent/public'), 'packages/core/src/agent/public.ts');
+  });
+
+  it('does not resolve a subpath the wildcard key is too short for', () => {
+    // ./lib/ is shorter than ./lib/*, so Node does not match it, and it
+    // must not resolve to src/.ts.
+    const packageJson = JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/'), undefined);
+  });
+
+  it('substitutes every star in a wildcard target', () => {
+    const packageJson = JSON.stringify({ exports: { './multi/*': { types: './dist/*-*.d.ts', default: './dist/*-*.js' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'multi/x-y'), 'packages/core/src/x-y-x-y.ts');
+  });
+
+  it('does not resolve a subpath whose wildcard suffix does not match', () => {
+    const packageJson = JSON.stringify({ exports: { './lib/*-test': { types: './dist/*.d.ts', default: './dist/*.js' } } });
+    // Long enough to pass the key-length check, so only the suffix can
+    // refuse it: without the suffix check this would resolve to src/abcd.ts.
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/abcdefgh'), undefined);
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/foo-test'), 'packages/core/src/foo.ts');
+  });
+
+  it('does not resolve a wildcard key whose types target names no per-subpath file', () => {
+    const packageJson = JSON.stringify({ exports: { './lib/*': { types: './dist/index.d.ts', default: './dist/index.js' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/foo'), undefined);
+  });
+
   it('follows a bare export star into a workspace sibling', () => {
     // The shape of the core move: e2e/agent re-exports the core package
     // through a bare specifier, and the names live in the core source.
@@ -364,6 +401,31 @@ describe('exportedNames and resolveEntryExports', () => {
     const exported = resolveEntryExports((path) => files.get(path), 'packages/e2e/src/agent/public.ts');
     assert.deepEqual([...(exported?.values ?? [])], []);
     assert.deepEqual([...(exported?.types ?? [])], []);
+  });
+
+  it('follows a relative export star through the relative file, never the bare resolver', () => {
+    const files = new Map([
+      ['src/engine/index.ts', `export * from './local.ts';\n`],
+      ['src/engine/local.ts', `export function fromRelative(): void {}\n`],
+      ['packages/other/src/x.ts', `export function fromBare(): void {}\n`],
+    ]);
+    const seen: string[] = [];
+    const resolveBare = (specifier: string): string | undefined => {
+      seen.push(specifier);
+      return specifier === './local.ts' ? 'packages/other/src/x.ts' : undefined;
+    };
+    const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts', resolveBare);
+    assert.deepEqual([...(exported?.values ?? [])], ['fromRelative']);
+    assert.deepEqual(seen, []);
+  });
+
+  it('does not fall through to the bare resolver when a relative export star has no file', () => {
+    const files = new Map([
+      ['src/engine/index.ts', `export * from './gone.ts';\n`],
+      ['packages/other/src/x.ts', `export function fromBare(): void {}\n`],
+    ]);
+    const resolveBare = (specifier: string): string | undefined => (specifier === './gone.ts' ? 'packages/other/src/x.ts' : undefined);
+    assert.equal(resolveEntryExports((path) => files.get(path), 'src/engine/index.ts', resolveBare), undefined);
   });
 });
 
@@ -402,6 +464,33 @@ describe('resolveWorkspaceSpecifier', () => {
   it('answers undefined for a package outside the workspace', () => {
     assert.equal(resolveWorkspaceSpecifier(read, dirs, 'zod'), undefined);
     assert.equal(resolveWorkspaceSpecifier(read, dirs, '@other/core/engine'), undefined);
+  });
+
+  it('does not match a package name without a slash boundary', () => {
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core2/engine'), undefined);
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/corex'), undefined);
+    // Without the boundary, @e2e-dev/core2 would read as the core package
+    // with the rest cut off, resolving its bare entry.
+    assert.equal(resolveWorkspaceSpecifier(read, dirs, '@e2e-dev/core2'), undefined);
+  });
+
+  it('prefers the longest package-name prefix', () => {
+    const nestedFiles = new Map([
+      ...files,
+      [
+        'packages/nested/package.json',
+        JSON.stringify({ exports: { './engine': { types: './dist/engine/index.d.ts', default: './dist/engine/index.js' } } }),
+      ],
+    ]);
+    const nestedDirs = new Map([
+      ...dirs,
+      ['@e2e-dev/core/nested', 'packages/nested'],
+    ]);
+    const nestedRead = (path: string): string | undefined => nestedFiles.get(path);
+    assert.equal(
+      resolveWorkspaceSpecifier(nestedRead, nestedDirs, '@e2e-dev/core/nested/engine'),
+      'packages/nested/src/engine/index.ts',
+    );
   });
 
   it('maps a wildcard subpath even when the file does not exist yet; the reader reports it missing', () => {
@@ -519,7 +608,55 @@ describe('tagExportsAt', () => {
     );
   });
 
-  it('follows a bare export star into a workspace sibling when a resolver is given', () => {
+  it('returns undefined, not missing, for a subpath a wildcard key covers without a types target', () => {
+    // The entry exists, only its types target is missing, so the floor is
+    // unverifiable, not a gap: hasExportKey must look past exact keys.
+    const files = new Map([
+      ['packages/e2e/package.json', JSON.stringify({ exports: { './lib/*': { default: './dist/*.js' } } })],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'lib/agent'),
+      undefined,
+    );
+  });
+
+  it('returns missing for a subpath a null target excludes', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' }, './null/*': null } }),
+      ],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'null/anything'),
+      'missing',
+    );
+  });
+
+  it('lets a null target on the longest match exclude the subpath even when a shorter key matches', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './*': { types: './dist/*.d.ts', default: './dist/*.js' }, './null/*': null } }),
+      ],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'null/anything'),
+      'missing',
+    );
+  });
+
+  it('returns missing for a subpath the wildcard key is too short for', () => {
+    const files = new Map([
+      ['packages/e2e/package.json', JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } })],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'lib/'),
+      'missing',
+    );
+  });
+
+  it('follows a bare export star into a workspace sibling through the same read', () => {
     const files = new Map([
       [
         'packages/e2e/package.json',
@@ -541,13 +678,15 @@ describe('tagExportsAt', () => {
       ['e2e', 'packages/e2e'],
       ['@e2e-dev/core', 'packages/core'],
     ]);
-    const atAgent = tagExportsAt(read, 'packages/e2e', 'agent', (specifier) => resolveWorkspaceSpecifier(read, dirs, specifier));
+    // The core manifest is read through the same `read` as the tag
+    // lookup, so the bare target cannot resolve against another version.
+    const atAgent = tagExportsAt(read, 'packages/e2e', 'agent', dirs);
     if (atAgent === undefined || atAgent === 'missing') assert.fail('expected export sets through the bare re-export');
     assert.deepEqual([...atAgent.values], ['defineTool']);
     assert.deepEqual([...atAgent.types], ['DefinedTool']);
   });
 
-  it('reads no names through a bare export star without a resolver', () => {
+  it('reads no names through a bare export star without package dirs', () => {
     const files = new Map([
       [
         'packages/e2e/package.json',

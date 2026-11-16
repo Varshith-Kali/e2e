@@ -1,16 +1,19 @@
 /**
  * Shared file and git reads for the release check scripts: the tag lookup,
- * the source walk and import collection, the changelog read, and the
- * pending changesets. One place, so the check scripts and their tests do
- * not each reimplement them.
+ * the source walk and import collection, the changelog read, the pending
+ * changesets, and the versions those changesets will release at. One place,
+ * so the check scripts and their tests do not each reimplement them.
  */
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { assembleReleasePlan } from '@changesets/assemble-release-plan';
+import { readConfig } from '@changesets/config';
 import { parseChangesetFile } from '@changesets/parse';
 import { addEngineImports, engineImports, type EngineImportMap, type ImportKind } from './engine-exports.ts';
 import { REPO_ROOT } from './public-packages.ts';
+import type { Changeset } from './changeset-bumps.ts';
 
 /** Reads `path` at `tag` (`git show`), undefined when the tag or the file does not exist. */
 export function showAtTag(tag: string, path: string): string | undefined {
@@ -90,15 +93,90 @@ export function pendingChangesets(): { file: string; changeset: ReturnType<typeo
   return files.map((file) => ({ file, changeset: parseChangesetFile(readFileSync(join(dir, file), 'utf8')) }));
 }
 
-/** The changesets `fixed` groups from `.changeset/config.json`: packages that release at one version. Empty when the config cannot be read or names none. */
-export function fixedGroups(): string[][] {
-  try {
-    const config = JSON.parse(readFileSync(join(REPO_ROOT, '.changeset', 'config.json'), 'utf8')) as { fixed?: unknown };
-    if (!Array.isArray(config.fixed)) return [];
-    return config.fixed.filter(
-      (group): group is string[] => Array.isArray(group) && group.every((name) => typeof name === 'string'),
-    );
-  } catch {
-    return [];
+/** A workspace package for the changesets release plan: its directory and manifest, dependency ranges included, since the plan bumps dependents whose ranges go out of range. */
+export interface ReleasePlanPackage {
+  readonly dir: string;
+  readonly packageJson: {
+    readonly name: string;
+    readonly version: string;
+    readonly dependencies?: Record<string, string>;
+    readonly devDependencies?: Record<string, string>;
+    readonly peerDependencies?: Record<string, string>;
+    readonly optionalDependencies?: Record<string, string>;
+    readonly private?: boolean;
+  };
+}
+
+/** Every named package under `packages/`, private ones included: the release plan needs the whole workspace, since a changeset may name any of them. */
+export function workspacePackages(): ReleasePlanPackage[] {
+  const packages: ReleasePlanPackage[] = [];
+  for (const dir of readdirSync(join(REPO_ROOT, 'packages'))) {
+    const path = join(REPO_ROOT, 'packages', dir, 'package.json');
+    let manifest: Partial<ReleasePlanPackage['packageJson']>;
+    try {
+      manifest = JSON.parse(readFileSync(path, 'utf8')) as Partial<ReleasePlanPackage['packageJson']>;
+    } catch {
+      continue;
+    }
+    if (manifest.name === undefined || manifest.version === undefined) continue;
+    packages.push({ dir: join(REPO_ROOT, 'packages', dir), packageJson: manifest as ReleasePlanPackage['packageJson'] });
   }
+  return packages;
+}
+
+/**
+ * The version each package's pending changesets will release at, computed
+ * by changesets itself (`assembleReleasePlan`): a `fixed` group releases
+ * every member at the group's highest current version with the group's
+ * highest bump, and a dependent whose range goes out of range gets a
+ * patch. Only packages the plan releases are in the map. Throws when
+ * `.changeset/config.json` cannot be read or is malformed: a broken
+ * config must fail the check loudly, not read as no fixed groups.
+ */
+export async function nextReleaseVersions(
+  packages: readonly ReleasePlanPackage[],
+  changesets: readonly { file: string; changeset: Changeset }[],
+  cwd: string = REPO_ROOT,
+): Promise<Map<string, string>> {
+  // The dependents graph is empty without a root package, so the plan
+  // cannot see dependents at all; read the root manifest for it.
+  let rootManifest: { name: string; version: string };
+  try {
+    rootManifest = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')) as { name: string; version: string };
+  } catch {
+    rootManifest = { name: '', version: '0.0.0' };
+  }
+  const planPackages = {
+    rootDir: cwd,
+    rootPackage: { dir: cwd, packageJson: rootManifest },
+    packages: packages.map((pkg) => ({ dir: pkg.dir, packageJson: pkg.packageJson })),
+    tool: { type: 'pnpm' },
+  } as Parameters<typeof assembleReleasePlan>[1];
+  let read: Awaited<ReturnType<typeof readConfig>>;
+  try {
+    read = await readConfig(cwd, planPackages);
+  } catch (error) {
+    // A malformed config throws out of readConfig instead of returning
+    // errors, so catch it here and report it as a config failure.
+    throw new Error(`cannot read .changeset/config.json: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+  const { config, errors } = read;
+  if (config === undefined || errors !== undefined) {
+    throw new Error(`cannot read .changeset/config.json: ${(errors ?? ['unknown error']).join('; ')}`);
+  }
+  const plan = assembleReleasePlan(
+    changesets.map(({ file, changeset }) => ({
+      id: file.replace(/\.md$/, ''),
+      summary: changeset.summary,
+      releases: changeset.releases,
+    })),
+    planPackages,
+    config,
+    undefined,
+  );
+  const versions = new Map<string, string>();
+  for (const release of plan.releases) {
+    if (release.type !== 'none' && release.newVersion !== undefined) versions.set(release.name, release.newVersion);
+  }
+  return versions;
 }

@@ -49,9 +49,8 @@ export function parseVersion(version: string): Semver | undefined {
   return [Number(major), Number(minor), Number(patch)];
 }
 
-/** -1, 0, or 1, semver order on `x.y.z` triples. */
-/** The version comparison: negative when `a` is older, 0 when equal, positive when newer. */
-export function compareVersions(a: Semver, b: Semver): number {
+/** The version comparison: -1, 0, or 1, semver order on `x.y.z` triples. Negative when `a` is older, 0 when equal, positive when newer. */
+function compareVersions(a: Semver, b: Semver): number {
   const [aMajor, aMinor, aPatch] = a;
   const [bMajor, bMinor, bPatch] = b;
   if (aMajor !== bMajor) return aMajor < bMajor ? -1 : 1;
@@ -112,30 +111,6 @@ export function latestReleaseVersion(tags: readonly string[], name: string): str
 }
 
 const BUMP_RANK: Record<BumpType, number> = { patch: 0, minor: 1, major: 2 };
-
-/** The highest bump each package gets across `changesets`; a release type that bumps nothing is skipped. */
-export function pendingBumps(changesets: readonly Changeset[]): Map<string, BumpType> {
-  const bumps = new Map<string, BumpType>();
-  for (const changeset of changesets) {
-    for (const { name, type } of changeset.releases) {
-      if (!(type in BUMP_RANK)) continue;
-      const bump = type as BumpType;
-      const current = bumps.get(name);
-      if (current === undefined || BUMP_RANK[bump] > BUMP_RANK[current]) bumps.set(name, bump);
-    }
-  }
-  return bumps;
-}
-
-/** The version a `type` bump of `version` releases; undefined when `version` is not `x.y.z`. */
-export function nextVersionAfterBump(version: string, type: BumpType): string | undefined {
-  const parsed = parseVersion(version);
-  if (parsed === undefined) return undefined;
-  const [major, minor, patch] = parsed;
-  if (type === 'patch') return `${major}.${minor}.${patch + 1}`;
-  if (type === 'minor') return `${major}.${minor + 1}.0`;
-  return `${major + 1}.0.0`;
-}
 
 export interface FloorRaiseInput {
   readonly name: string;

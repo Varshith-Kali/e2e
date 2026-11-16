@@ -7,9 +7,7 @@ import {
   floorRaiseProblems,
   floorRaisesPastMinor,
   latestReleaseVersion,
-  nextVersionAfterBump,
   parseVersion,
-  pendingBumps,
   versionBumpAnnounces,
   type FloorRaiseInput,
 } from './changeset-bumps.ts';
@@ -192,21 +190,10 @@ describe('latestReleaseVersion', () => {
   });
 });
 
-describe('pendingBumps and nextVersionAfterBump', () => {  it('takes the highest bump per package', () => {
-    const bumps = pendingBumps([
-      parseChangesetFile('---\n"e2e": patch\n---\n\nA fix.\n'),
-      parseChangesetFile('---\n"e2e": minor\n"@e2e-dev/web": patch\n---\n\n**Breaking:** a break.\n'),
-    ]);
-    assert.equal(bumps.get('e2e'), 'minor');
-    assert.equal(bumps.get('@e2e-dev/web'), 'patch');
-  });
-
-  it('bumps versions the way changesets does', () => {
-    assert.equal(nextVersionAfterBump('0.23.0', 'patch'), '0.23.1');
-    assert.equal(nextVersionAfterBump('0.23.0', 'minor'), '0.24.0');
-    assert.equal(nextVersionAfterBump('0.23.0', 'major'), '1.0.0');
-    assert.equal(nextVersionAfterBump('not semver', 'patch'), undefined);
+describe('parseVersion', () => {
+  it('parses strict x.y.z and nothing else', () => {
     assert.deepEqual(parseVersion('0.23.0'), [0, 23, 0]);
     assert.equal(parseVersion('0.23.0-canary-x'), undefined);
+    assert.equal(parseVersion('not semver'), undefined);
   });
 });

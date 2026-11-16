@@ -44,8 +44,10 @@
     "Szymon Rybczak <szymon@e2e.com>"
   ],
   "devDependencies": {
+    "@changesets/assemble-release-plan": "7.0.0",
     "@changesets/changelog-github": "1.0.1",
     "@changesets/cli": "3.0.3",
+    "@changesets/config": "4.0.1",
     "@changesets/parse": "1.0.0",
     "@mdx-js/mdx": "3.1.1",
     "@oxlint/plugins": "1.94.0",
