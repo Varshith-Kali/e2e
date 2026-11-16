@@ -90,9 +90,9 @@ built-in agent's action tools for the verbs the target's engine supports,
 and each result reports what changed on screen. `BASE_RULES` is the
 built-in agent's guidance for those tools; start your `system` with it.
 Build the grammar tools inside the `tools` factory, as above: each run
-then renders through its own presenter, and a context-overflow shrink
-clears that run's folds. A set built once outside the loop keeps its
-presenter across runs instead.
+then renders through its own presenter. A context-overflow shrink clears
+the folds of every presenter the context has rendered through, including a
+set built once outside the loop, which keeps its presenter across runs.
 
 ```ts
 import { BASE_RULES, createGrammarTools, createToolLoopExecutor } from 'e2e/agent';
