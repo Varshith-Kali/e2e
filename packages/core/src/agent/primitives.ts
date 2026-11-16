@@ -232,9 +232,9 @@ interface GrammarToolSetup extends GrammarToolOptions {
   /**
    * Renders screens for the model and remembers what it has seen, so every
    * result after the first reports the changes rather than the whole tree.
-   * Shared with the opening prompt by the built-in agent and with the session
-   * by `e2e mcp`; without one, the loop run's presenter when built inside a
-   * loop, else a fresh presenter of its own.
+   * Passed by `e2e mcp` to share with the session; without one, the loop
+   * run's presenter when built inside a loop, else a fresh presenter of its
+   * own.
    */
   readonly screen?: ScreenPresenter;
   /**
@@ -918,7 +918,7 @@ function createPointTools(
 
 /**
  * What every verb runs through: the loop guard, the
- * step's presenter, one queue for the tool bodies (an action and its look
+ * loop run's presenter, one queue for the tool bodies (an action and its look
  * at the result run together, so a batched turn gets one coherent result
  * per action), and the two moves each verb makes: present the screen after
  * an action, and perform an action then present. A failed action still

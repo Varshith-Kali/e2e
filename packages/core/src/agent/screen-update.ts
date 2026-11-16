@@ -389,51 +389,58 @@ export class ScreenPresenter {
 }
 
 /**
- * One presenter per loop run, bound to the step's context for the run and
- * restored after it, so the presenter state matches that run's transcript
- * alone: two loops run against one step context each see their own first
- * screen. Tools built outside a run read the binding while one is in
- * progress, else use a presenter of their own. Keyed by the step's context
- * object, so a run's presenter dies with it.
+ * One presenter per loop run, stacked on the step's context for the run, so
+ * the presenter state matches that run's transcript alone: two loops run
+ * against one step context each see their own first screen, and a run nested
+ * inside another run's tool reads its own. Tools built outside a run read
+ * the top binding while one is in progress, else use a presenter of their
+ * own. Keyed by the step's context object, so a run's presenter dies with it.
  */
-const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
+const presenterStacks = new WeakMap<StepExecutorContext, ScreenPresenter[]>();
 
-/** The step's presenter, creating it on first use. */
+/**
+ * The loop run's presenter, or a fresh presenter of its own when no run
+ * bound one: the opening prompt inside a run reads the run's presenter, and
+ * a prompt built outside a run never shares screen state with one.
+ */
 export function presenterFor(context: StepExecutorContext): ScreenPresenter {
-  let presenter = presenters.get(context);
-  if (presenter === undefined) {
-    presenter = new ScreenPresenter();
-    presenters.set(context, presenter);
-  }
-  return presenter;
+  return boundPresenter(context) ?? new ScreenPresenter();
 }
 
-/** The presenter bound to the step's context, if a loop run bound one: reads only, never creates. */
+/** The presenter the innermost loop run bound to the step's context, if one bound one: reads only, never creates. */
 export function boundPresenter(context: StepExecutorContext): ScreenPresenter | undefined {
-  return presenters.get(context);
+  return presenterStacks.get(context)?.at(-1);
 }
 
 /**
- * Binds a fresh presenter to the step's context, replacing whatever it held,
- * and returns it. A loop run binds one at the start of its run, so each run
- * starts from a screen its own model has seen, and restores the previous
- * binding when the run ends. `presenterFor` stays the fallback for the
- * opening prompt inside a run.
+ * Binds a fresh presenter to the step's context, pushed onto the stack above
+ * whatever runs already bound, and returns it. A loop run binds one at the
+ * start of its run, so each run starts from a screen its own model has seen,
+ * and removes its own presenter when the run ends. `presenterFor` stays the
+ * fallback for the opening prompt inside a run.
  */
 export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
   const presenter = new ScreenPresenter();
-  presenters.set(context, presenter);
+  const stack = presenterStacks.get(context);
+  if (stack === undefined) presenterStacks.set(context, [presenter]);
+  else stack.push(presenter);
   return presenter;
 }
 
 /**
- * Restores the binding a loop run replaced when the run ends, or drops the
- * entry when there was none, so tools built outside a loop never share a
- * run's presenter.
+ * Removes the loop run's own presenter from the stack when the run ends, by
+ * identity: a run that ends while another run is still bound above it leaves
+ * that run's presenter in place, and a run that ends after an overlapping
+ * run never puts back a presenter whose run is over. Tools built outside a
+ * loop then find no binding and use a presenter of their own.
  */
-export function restorePresenter(context: StepExecutorContext, previous: ScreenPresenter | undefined): void {
-  if (previous === undefined) presenters.delete(context);
-  else presenters.set(context, previous);
+export function restorePresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
+  const stack = presenterStacks.get(context);
+  if (stack === undefined) return;
+  const index = stack.lastIndexOf(presenter);
+  if (index === -1) return;
+  stack.splice(index, 1);
+  if (stack.length === 0) presenterStacks.delete(context);
 }
 
 /** The line under a screenshot: its pixel size and the coordinate space the point verbs read. */

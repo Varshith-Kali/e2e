@@ -292,6 +292,120 @@ describe('tool loop context overflow', () => {
     expect(step.status).toBe('passed');
   });
 
+  it('gives tools built after two concurrent runs on one context their own first screen', async () => {
+    let after: string | undefined;
+    // Content-scripted, not turn-scripted: the two runs interleave, so no
+    // absolute turn belongs to either loop.
+    const model = installFakeLoopModel((call) => {
+      if (call.lastToolResult === '') return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'loop read the sidebar' } }];
+    });
+    const loop = () =>
+      createToolLoopExecutor({
+        name: 'custom-loop',
+        tools: (context) => createGrammarTools(context),
+        buildPrompt: () => 'read the big output',
+      });
+    // The review's repro: one custom runStep that runs two loops against the
+    // same step context at once, then builds grammar tools from it. The
+    // screen never changes, so a presenter left bound by either run would
+    // answer the later look with the screen that run already showed.
+    const executor: StepExecutor = {
+      name: 'two-concurrent-loops',
+      runStep: async (context) => {
+        const [first] = await Promise.all([loop().runStep(context), loop().runStep(context)]);
+        after = await observeDirectly(context);
+        return first!;
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => 0), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(4);
+    // Each loop's first look lists the sidebar in full, as its own first screen.
+    for (const call of loopCalls) {
+      if (call.lastToolResult === '') continue;
+      expect(call.lastToolResult).toMatch(/Current screen \(revision b\d+/);
+      expect(call.lastToolResult).toContain('#n901 link "Item 1"');
+      expect(call.lastToolResult).not.toContain('unchanged since revision');
+    }
+    // The tools built after both runs get their own first screen, instead of
+    // reporting the screen the run that ended last already showed.
+    expect(after).toMatch(/Current screen \(revision b\d+/);
+    expect(after).toContain('#n901 link "Item 1"');
+    expect(after).not.toContain('unchanged since revision');
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+  });
+
+  it('gives a loop nested inside another loop\'s tool its own first screen, and the outer loop keeps its own', async () => {
+    let outerContext: StepExecutorContext | undefined;
+    const inner = () =>
+      createToolLoopExecutor({
+        name: 'inner-loop',
+        tools: (context) => createGrammarTools(context),
+        buildPrompt: () => 'read the big output',
+      });
+    // A project tool that runs a second loop against the same step context,
+    // as a custom executor that delegates part of a step would.
+    const nest = defineTool(
+      {
+        inputSchema: z.object({}),
+        execute: async () => {
+          const verdict = await inner().runStep(outerContext!);
+          return `nested loop ${verdict.status}`;
+        },
+      },
+      { mutates: false },
+    );
+    const model = installFakeLoopModel((call) => {
+      // The inner loop offers no `nest` tool, so the tool names tell the
+      // loops apart whatever order their turns interleave in.
+      if (call.toolNames.includes('nest')) {
+        if (call.lastToolResult === '') return [{ toolName: 'nest', input: {} }];
+        if (call.lastToolResult.includes('nested loop passed')) return [{ toolName: 'observe', input: {} }];
+        return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'outer read the sidebar after the nested run' } }];
+      }
+      if (call.lastToolResult === '') return [{ toolName: 'observe', input: {} }];
+      return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'inner read the sidebar' } }];
+    });
+    const outer = createToolLoopExecutor({
+      name: 'outer-loop',
+      tools: (context, helpers) => ({
+        ...projectTools(context, { nest }),
+        ...createGrammarTools(context, { guard: helpers.guard }),
+      }),
+      buildPrompt: () => 'read the big output',
+    });
+    const executor: StepExecutor = {
+      name: 'nested-loops',
+      runStep: async (context) => {
+        outerContext = context;
+        return outer.runStep(context);
+      },
+    };
+    const { fixtures, steps } = runtime(foldingBigScreen(() => 0), { agents: { default: { executor, model } } });
+
+    await fixtures.agent.act('read the big output');
+
+    expect(loopCalls).toHaveLength(5);
+    // The inner loop's first look and the outer loop's look after the nested
+    // run each list the sidebar in full, as their own first screens: the
+    // nested run never touched the outer presenter's screen, and the outer
+    // look never reuses the inner run's. A run that reused the outer
+    // binding instead of binding fresh would answer the outer look with the
+    // screen the inner run already showed.
+    for (const call of loopCalls) {
+      if (call.lastToolResult === '' || call.lastToolResult.includes('nested loop passed')) continue;
+      expect(call.lastToolResult).toMatch(/Current screen \(revision b\d+/);
+      expect(call.lastToolResult).toContain('#n901 link "Item 1"');
+      expect(call.lastToolResult).not.toContain('unchanged since revision');
+    }
+    const step = steps.all()[0]!;
+    expect(step.status).toBe('passed');
+  });
+
   it('gives each toolset built outside a loop its own first screen', async () => {
     let first: string | undefined;
     let second: string | undefined;

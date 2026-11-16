@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { bindPresenter, boundPresenter, isScreenOutput, reportsNoEffect, restorePresenter, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
+import { bindPresenter, isScreenOutput, reportsNoEffect, restorePresenter, toolResultTexts, type ScreenPresenter } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -353,13 +353,16 @@ class LoopRun {
   }
 
   async run(): Promise<StepVerdict> {
-    // A fresh presenter per run, restored after it: the transcript belongs to this loop, not the step context.
-    const previous = boundPresenter(this.context);
-    this.presenter = bindPresenter(this.context);
+    // A fresh presenter per run, removed after it: the transcript belongs to
+    // this loop, not the step context. Removed by identity, so a run that ends
+    // while another run on this context is still going leaves that run's
+    // presenter in place and never puts back one whose run is over.
+    const presenter = bindPresenter(this.context);
+    this.presenter = presenter;
     try {
       return await this.runLoop();
     } finally {
-      restorePresenter(this.context, previous);
+      restorePresenter(this.context, presenter);
       this.presenter = undefined;
     }
   }
