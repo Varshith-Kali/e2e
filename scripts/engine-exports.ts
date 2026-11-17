@@ -379,17 +379,9 @@ export function resolveEntryExports(
  * does not parse.
  */
 export function subpathEntryFile(packageJson: string, siblingDir: string, subpath: string): string | undefined {
-  let parsed: { name?: unknown; exports?: Record<string, unknown> };
-  try {
-    parsed = JSON.parse(packageJson) as { name?: unknown; exports?: Record<string, unknown> };
-  } catch {
-    return undefined;
-  }
-  return entryFileFromExports(
-    { name: typeof parsed.name === 'string' ? parsed.name : '', exports: parsed.exports },
-    siblingDir,
-    subpath,
-  );
+  const manifest = parseManifest(packageJson);
+  if (manifest === undefined) return undefined;
+  return entryFileFromExports(manifest, siblingDir, subpath);
 }
 
 /** A parsed package manifest, as much of it as resolve.exports reads. */
@@ -399,56 +391,63 @@ type PackageManifest = {
 };
 
 /**
- * The `types` target for `subpath` in a package manifest, resolved by
- * resolve.exports under the `types` condition. resolve.exports always
- * matches `default` too, so a covering entry with no `types` target
- * resolves to its JavaScript file instead: only a `.d.ts` target counts
- * as a types target, and anything else means the entry has none. That
- * also covers a `types` target listed after `default`, which Node
- * resolves to `default` first by key order. Undefined when the subpath
- * has no types target there.
+ * Parses a package manifest, keeping only what resolve.exports reads.
+ * Undefined when the JSON does not parse.
  */
-function exportTypesTarget(manifest: PackageManifest, subpath: string): string | undefined {
+function parseManifest(packageJson: string): PackageManifest | undefined {
+  let parsed: { name?: unknown; exports?: unknown };
+  try {
+    parsed = JSON.parse(packageJson) as { name?: unknown; exports?: unknown };
+  } catch {
+    return undefined;
+  }
+  return { name: typeof parsed.name === 'string' ? parsed.name : '', exports: parsed.exports };
+}
+
+/**
+ * The export state of one subpath under the check's `types` resolution.
+ * `missing` when no key covers the subpath, or the selected target is
+ * null: resolve.exports throws for both, so either throw means missing.
+ * `covered` when a key resolves to a real target; `typesTarget` is the
+ * `.d.ts` target when the entry has one, and undefined when it does not.
+ * resolve.exports always matches `default` too, so a covering entry with
+ * no `types` target resolves to its JavaScript file instead, and a
+ * `types` target listed after `default` loses to it by key order; both
+ * stay unverifiable rather than missing, since the entry exists. A
+ * condition-object `exports` needs no wrapping: resolve.exports reads
+ * it as the `.` entry. A `require`- or `browser`-only entry reads as
+ * missing, not unverifiable: an ESM import cannot use it, so for this
+ * check the sibling does not export the subpath.
+ */
+type ExportResolution =
+  | { readonly state: 'missing' }
+  | { readonly state: 'covered'; readonly typesTarget: string | undefined };
+
+/**
+ * Resolves one subpath in a package manifest, once, under the `types`
+ * condition: the missing-or-covered answer and the types target together.
+ */
+function resolveExport(manifest: PackageManifest, subpath: string): ExportResolution {
   let targets: readonly string[] | undefined;
   try {
     targets = resolveExports(manifest, exportKey(subpath), { conditions: ['types'] }) ?? undefined;
   } catch {
-    return undefined;
+    return { state: 'missing' };
   }
-  return targets?.find((target) => target.endsWith('.d.ts'));
+  if (targets === undefined || targets.length === 0) return { state: 'missing' };
+  return { state: 'covered', typesTarget: targets.find((target) => target.endsWith('.d.ts')) };
 }
 
-/**
- * The `exports` map with the conditional sugar form (an `exports` object
- * whose first key is a condition, not a subpath) wrapped as the `.`
- * entry, the way resolve.exports reads it.
- */
-function exportsMap(exports: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (exports === undefined) return undefined;
-  const [first] = Object.keys(exports);
-  if (first !== undefined && !first.startsWith('.')) return { '.': exports };
-  return exports;
-}
-
-/**
- * Whether an `exports` map covers `subpath` with a real target under the check's `types` resolution. resolve.exports resolves the covering key's selected conditional target the same way `exportTypesTarget` does, so a `null` the selected conditions reach, nested or not, counts as the sibling not exporting the subpath there. A covering key with a real target but no `types` target still counts as covered: the entry exists, only its types are missing, so the floor stays unverifiable (see `tagExportsAt`). resolve.exports throws both when no key covers the subpath and when the selected target is `null`; both are missing here, so either throw means false.
- */
-function hasExportKey(exports: Record<string, unknown> | undefined, subpath: string): boolean {
-  const map = exportsMap(exports);
-  if (map === undefined) return false;
-  try {
-    const targets = resolveExports({ name: '', exports: map }, exportKey(subpath), { conditions: ['types'] });
-    return targets !== undefined && targets.length > 0;
-  } catch {
-    return false;
-  }
+/** The source file for a `.d.ts` types target, mapped from `dist/` to `src/`. */
+function entryFileForTypesTarget(typesTarget: string, siblingDir: string): string {
+  return `${siblingDir}/src/${typesTarget.replace(/^\.\/dist\//, '').replace(/\.d\.ts$/, '.ts')}`;
 }
 
 /** The entry file for a subpath from an already-parsed package manifest. */
 function entryFileFromExports(manifest: PackageManifest, siblingDir: string, subpath: string): string | undefined {
-  const types = exportTypesTarget(manifest, subpath);
-  if (types === undefined) return undefined;
-  return `${siblingDir}/src/${types.replace(/^\.\/dist\//, '').replace(/\.d\.ts$/, '.ts')}`;
+  const resolved = resolveExport(manifest, subpath);
+  if (resolved.state !== 'covered' || resolved.typesTarget === undefined) return undefined;
+  return entryFileForTypesTarget(resolved.typesTarget, siblingDir);
 }
 
 /**
@@ -504,19 +503,14 @@ export function tagExportsAt(
 ): TagExports | undefined {
   const manifest = readFile(`${siblingDir}/package.json`);
   if (manifest === undefined) return undefined;
-  let parsed: { name?: unknown; exports?: Record<string, unknown> };
-  try {
-    parsed = JSON.parse(manifest) as { name?: unknown; exports?: Record<string, unknown> };
-  } catch {
-    return undefined;
-  }
-  const pkg: PackageManifest = { name: typeof parsed.name === 'string' ? parsed.name : '', exports: parsed.exports };
-  const entry = entryFileFromExports(pkg, siblingDir, subpath);
+  const pkg = parseManifest(manifest);
+  if (pkg === undefined) return undefined;
   const resolveBare: BareSpecifierResolver | undefined =
     packageDirs === undefined ? undefined : (specifier: string): string | undefined => resolveWorkspaceSpecifier(readFile, packageDirs, specifier);
-  if (entry !== undefined) return resolveEntryExports(readFile, entry, resolveBare);
-  if (hasExportKey(parsed.exports, subpath)) return undefined;
-  return 'missing';
+  const resolved = resolveExport(pkg, subpath);
+  if (resolved.state === 'missing') return 'missing';
+  if (resolved.typesTarget === undefined) return undefined;
+  return resolveEntryExports(readFile, entryFileForTypesTarget(resolved.typesTarget, siblingDir), resolveBare);
 }
 
 export interface EngineImportCheck {
