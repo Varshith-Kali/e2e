@@ -353,17 +353,42 @@ describe('exportedNames and resolveEntryExports', () => {
     assert.equal(subpathEntryFile(packageJson, 'packages/core', 'multi/x-y'), 'packages/core/src/x-y-x-y.ts');
   });
 
+  it('reads a nested import condition types target', () => {
+    // resolve.exports reads a `types` target nested under `import`; the
+    // hand-written matching could not, and reported the entry unverifiable.
+    const packageJson = JSON.stringify({ exports: { './i': { import: { types: './dist/i.d.ts', default: './dist/i.js' } } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/e2e', 'i'), 'packages/e2e/src/i.ts');
+  });
+
+  it('reads the bare entry off a condition-sugar exports map', () => {
+    // An `exports` object with no subpath keys is the condition map for
+    // `.`, and resolve.exports reads it that way.
+    const packageJson = JSON.stringify({ exports: { types: './dist/index.d.ts', default: './dist/index.js' } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/e2e', ''), 'packages/e2e/src/index.ts');
+    assert.equal(subpathEntryFile(packageJson, 'packages/e2e', 'engine'), undefined);
+  });
+
+  it('does not read a types target listed after default', () => {
+    // Node resolves conditions in key order, so `default` first wins
+    // even when `types` is present: the entry has no reachable types
+    // target, and stays unverifiable rather than reading the JS file.
+    const packageJson = JSON.stringify({ exports: { './engine': { default: './dist/engine/index.js', types: './dist/engine/index.d.ts' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/e2e', 'engine'), undefined);
+  });
+
+  it('resolves a wildcard target with no star as-is, like Node', () => {
+    // A pattern target without `*` names one file for every subpath:
+    // Node resolves it as-is, so the check reads that entry file.
+    const packageJson = JSON.stringify({ exports: { './lib/*': { types: './dist/index.d.ts', default: './dist/index.js' } } });
+    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/foo'), 'packages/core/src/index.ts');
+  });
+
   it('does not resolve a subpath whose wildcard suffix does not match', () => {
     const packageJson = JSON.stringify({ exports: { './lib/*-test': { types: './dist/*.d.ts', default: './dist/*.js' } } });
     // Long enough to pass the key-length check, so only the suffix can
     // refuse it: without the suffix check this would resolve to src/abcd.ts.
     assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/abcdefgh'), undefined);
     assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/foo-test'), 'packages/core/src/foo.ts');
-  });
-
-  it('does not resolve a wildcard key whose types target names no per-subpath file', () => {
-    const packageJson = JSON.stringify({ exports: { './lib/*': { types: './dist/index.d.ts', default: './dist/index.js' } } });
-    assert.equal(subpathEntryFile(packageJson, 'packages/core', 'lib/foo'), undefined);
   });
 
   it('follows a bare export star into a workspace sibling', () => {

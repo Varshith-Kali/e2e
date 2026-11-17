@@ -20,6 +20,7 @@
  */
 
 import { parseSync } from 'oxc-parser';
+import { exports as resolveExports } from 'resolve.exports';
 
 /** Whether an import takes the name as a value or only as a type. A value import needs a value export; a type import is satisfied by either kind. */
 export type ImportKind = 'value' | 'type';
@@ -372,96 +373,112 @@ export function resolveEntryExports(
 
 /**
  * The source file for a sibling's subpath entry, from the sibling's
- * `package.json` (`exports` `types` target, mapped from `dist/` to
- * `src/`). `subpath` is `''` for the bare entry. Undefined when the
- * package has no such export, or its manifest does not parse.
+ * `package.json` (`exports` `types` target, resolved by resolve.exports
+ * and mapped from `dist/` to `src/`). `subpath` is `''` for the bare
+ * entry. Undefined when the package has no such export, or its manifest
+ * does not parse.
  */
 export function subpathEntryFile(packageJson: string, siblingDir: string, subpath: string): string | undefined {
-  let exports: Record<string, unknown> | undefined;
+  let parsed: { name?: unknown; exports?: Record<string, unknown> };
   try {
-    exports = (JSON.parse(packageJson) as { exports?: Record<string, unknown> }).exports;
+    parsed = JSON.parse(packageJson) as { name?: unknown; exports?: Record<string, unknown> };
   } catch {
     return undefined;
   }
-  return entryFileFromExports(exports, siblingDir, subpath);
+  return entryFileFromExports(
+    { name: typeof parsed.name === 'string' ? parsed.name : '', exports: parsed.exports },
+    siblingDir,
+    subpath,
+  );
 }
 
-/** The `types` target of an `exports` entry (a string, or its `types` field), undefined when it has none. */
-function entryTypesTarget(entry: unknown): string | undefined {
-  if (typeof entry === 'string') return entry;
-  if (isRecord(entry) && typeof entry.types === 'string') return entry.types;
-  return undefined;
-}
+/** A parsed package manifest, as much of it as resolve.exports reads. */
+type PackageManifest = {
+  readonly name: string;
+  readonly exports?: unknown;
+};
 
 /**
- * The `exports` keys covering `subpath`, best first: the exact key, then
- * `*` keys by longest prefix before `*`, ties broken by longest key, the
- * order Node resolves subpath patterns in. A `*` key covers the subpath
- * only when the key is at least as long as the pattern (the `*` matches at
- * least one character, so `./lib/` does not match `./lib/*`) and starts
- * with the prefix and ends with the suffix.
+ * The `types` target for `subpath` in a package manifest, resolved by
+ * resolve.exports under the `types` condition. resolve.exports always
+ * matches `default` too, so a covering entry with no `types` target
+ * resolves to its JavaScript file instead: only a `.d.ts` target counts
+ * as a types target, and anything else means the entry has none. That
+ * also covers a `types` target listed after `default`, which Node
+ * resolves to `default` first by key order. Undefined when the subpath
+ * has no types target there.
  */
-function coveringExportKeys(exports: Record<string, unknown> | undefined, subpath: string): string[] {
-  if (exports === undefined) return [];
-  const key = exportKey(subpath);
-  if (exports[key] !== undefined) return [key];
-  const patterns: { pattern: string; prefix: string }[] = [];
-  for (const pattern of Object.keys(exports)) {
-    const star = pattern.indexOf('*');
-    if (star === -1) continue;
-    const prefix = pattern.slice(0, star);
-    const suffix = pattern.slice(star + 1);
-    if (key.length < pattern.length || !key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    patterns.push({ pattern, prefix });
+function exportTypesTarget(manifest: PackageManifest, subpath: string): string | undefined {
+  let targets: readonly string[] | undefined;
+  try {
+    targets = resolveExports(manifest, exportKey(subpath), { conditions: ['types'] }) ?? undefined;
+  } catch {
+    return undefined;
   }
-  patterns.sort((a, b) => b.prefix.length - a.prefix.length || b.pattern.length - a.pattern.length);
-  return patterns.map(({ pattern }) => pattern);
+  return targets?.find((target) => target.endsWith('.d.ts'));
 }
 
 /**
- * The `types` target for `subpath` in an `exports` map, following Node's
- * subpath-pattern rules: the exact key wins, then the best `*` key, and
- * every `*` in the target is replaced by the matched middle. A `null`
- * target excludes the subpath outright, even when a shorter key would
- * match. A key whose target has no `types` entry, or no `*` to substitute
- * a per-subpath file, falls through to the next covering key. Undefined
- * when no key covers it, or the covering key excludes it.
+ * The `exports` map with the conditional sugar form (an `exports` object
+ * whose first key is a condition, not a subpath) wrapped as the `.`
+ * entry, the way resolve.exports reads it.
  */
-function exportTypesTarget(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
+function exportsMap(exports: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (exports === undefined) return undefined;
+  const [first] = Object.keys(exports);
+  if (first !== undefined && !first.startsWith('.')) return { '.': exports };
+  return exports;
+}
+
+/**
+ * The `exports` key covering `subpath`, picked the way resolve.exports
+ * picks it: the exact key, else the longest `*` key whose pattern
+ * matches, ties going to the later key. A trailing-slash key covers by
+ * prefix, as in the library. Undefined when no key covers it.
+ *
+ * This is only the covering check resolve.exports cannot answer: it
+ * throws the same `Missing ... specifier` error when no key covers the
+ * subpath and when the covering key excludes it with `null`, and the
+ * check must keep those apart (an excluded subpath is missing, a
+ * covered subpath with no `types` target is unverifiable, see
+ * `tagExportsAt`). The target itself always comes from resolve.exports,
+ * never from this key.
+ */
+function coveringExportKey(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
+  const map = exportsMap(exports);
+  if (map === undefined) return undefined;
   const key = exportKey(subpath);
-  const exact = exports[key];
-  if (exact !== undefined) {
-    // The exact key wins outright: a null target excludes the subpath,
-    // and a plain string target names the entry file as it is.
-    if (exact === null) return undefined;
-    return entryTypesTarget(exact);
-  }
-  for (const pattern of coveringExportKeys(exports, subpath)) {
-    const entry = exports[pattern];
-    if (entry === null) return undefined;
-    const target = entryTypesTarget(entry);
-    // A pattern key with no `types` entry, or one that names no
-    // per-subpath file, falls through to the next covering key.
-    if (target === undefined || !target.includes('*')) continue;
+  if (map[key] !== undefined) return key;
+  let best: string | undefined;
+  for (const pattern of Object.keys(map)) {
+    if (best !== undefined && pattern.length < best.length) continue;
+    if (pattern.endsWith('/') && key.startsWith(pattern)) {
+      best = pattern;
+      continue;
+    }
     const star = pattern.indexOf('*');
+    if (star === -1 || pattern.length <= 1) continue;
     const prefix = pattern.slice(0, star);
     const suffix = pattern.slice(star + 1);
-    return target.replaceAll('*', key.slice(prefix.length, key.length - suffix.length));
+    // The `*` matches at least one character, so the key must be longer
+    // than the pattern without its `*`.
+    if (key.length - prefix.length - suffix.length < 1 || !key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    best = pattern;
   }
-  return undefined;
+  return best;
 }
 
 /** Whether an `exports` map covers `subpath` at all: an exact key or a `*` key, with a target that is not `null`. Only the best covering key counts: a `null` target on it excludes the subpath, even when a shorter key would match. */
 function hasExportKey(exports: Record<string, unknown> | undefined, subpath: string): boolean {
-  if (exports === undefined) return false;
-  const [best] = coveringExportKeys(exports, subpath);
-  return best !== undefined && exports[best] !== null;
+  const map = exportsMap(exports);
+  if (map === undefined) return false;
+  const best = coveringExportKey(map, subpath);
+  return best !== undefined && map[best] !== null;
 }
 
-/** The entry file for a subpath from an already-parsed `exports` map. */
-function entryFileFromExports(exports: Record<string, unknown> | undefined, siblingDir: string, subpath: string): string | undefined {
-  const types = exportTypesTarget(exports, subpath);
+/** The entry file for a subpath from an already-parsed package manifest. */
+function entryFileFromExports(manifest: PackageManifest, siblingDir: string, subpath: string): string | undefined {
+  const types = exportTypesTarget(manifest, subpath);
   if (types === undefined) return undefined;
   return `${siblingDir}/src/${types.replace(/^\.\/dist\//, '').replace(/\.d\.ts$/, '.ts')}`;
 }
@@ -519,17 +536,18 @@ export function tagExportsAt(
 ): TagExports | undefined {
   const manifest = readFile(`${siblingDir}/package.json`);
   if (manifest === undefined) return undefined;
-  let exports: Record<string, unknown> | undefined;
+  let parsed: { name?: unknown; exports?: Record<string, unknown> };
   try {
-    exports = (JSON.parse(manifest) as { exports?: Record<string, unknown> }).exports;
+    parsed = JSON.parse(manifest) as { name?: unknown; exports?: Record<string, unknown> };
   } catch {
     return undefined;
   }
-  const entry = entryFileFromExports(exports, siblingDir, subpath);
+  const pkg: PackageManifest = { name: typeof parsed.name === 'string' ? parsed.name : '', exports: parsed.exports };
+  const entry = entryFileFromExports(pkg, siblingDir, subpath);
   const resolveBare: BareSpecifierResolver | undefined =
     packageDirs === undefined ? undefined : (specifier: string): string | undefined => resolveWorkspaceSpecifier(readFile, packageDirs, specifier);
   if (entry !== undefined) return resolveEntryExports(readFile, entry, resolveBare);
-  if (hasExportKey(exports, subpath)) return undefined;
+  if (hasExportKey(parsed.exports, subpath)) return undefined;
   return 'missing';
 }
 
