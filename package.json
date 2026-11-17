@@ -55,7 +55,7 @@
     "@types/node": "26.6.6",
     "ajv": "8.20.0",
     "fallow": "3.43.2",
-    "oxc-parser": "0.158.0",
+    "oxc-parser": "0.159.0",
     "oxlint": "1.94.0",
     "remark-gfm": "4.0.1",
     "resolve.exports": "2.0.4",
