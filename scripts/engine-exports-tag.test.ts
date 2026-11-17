@@ -234,7 +234,7 @@ describe('exportedNames and resolveEntryExports', () => {
         'packages/core/src/agent/public.ts',
         `export { defineTool, type DefinedTool, type ToolAnnotations } from './tool.ts';\n`,
       ],
-      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\\nexport interface DefinedTool {}\\nexport interface ToolAnnotations {}\\n`],
+      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\nexport interface DefinedTool {}\nexport interface ToolAnnotations {}\n`],
     ]);
     const read = (path: string): string | undefined => files.get(path);
     const dirs = new Map([
