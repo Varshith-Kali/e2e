@@ -671,6 +671,77 @@ describe('tagExportsAt', () => {
     );
   });
 
+  it('returns missing for a subpath whose types target is null', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './engine': { types: null, default: './dist/engine.js' } } }),
+      ],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'engine'),
+      'missing',
+    );
+  });
+
+  it('returns missing for a subpath whose nested conditional types target is null', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({
+          exports: { './engine': { node: { types: null, default: './dist/engine.js' }, default: './dist/engine.js' } },
+        }),
+      ],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'engine'),
+      'missing',
+    );
+  });
+
+  it('returns undefined, not missing, when the null is under a condition the check does not select', () => {
+    // The browser branch is never selected under the node/types
+    // conditions, so its null excludes nothing: the default target is
+    // real, only its types are missing, and the floor stays unverifiable.
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({ exports: { './engine': { browser: { types: null }, default: './dist/engine.js' } } }),
+      ],
+    ]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'engine'),
+      undefined,
+    );
+  });
+
+  it('fails a named import from a subpath a nested conditional null excludes', () => {
+    const files = new Map([
+      [
+        'packages/e2e/package.json',
+        JSON.stringify({
+          exports: { './engine': { node: { types: null, default: './dist/engine.js' }, default: './dist/engine.js' } },
+        }),
+      ],
+    ]);
+    const read = (path: string): string | undefined => files.get(path);
+    const check: EngineImportCheck = {
+      packageName: '@e2e-dev/web',
+      packagePath: 'packages/web/package.json',
+      sibling: 'e2e',
+      floor: '0.22.0',
+      imports: new Map([['engine', new Map<string, ImportKind>([['stepTimeout', 'value']])]]),
+    };
+    const { problems, unverifiable, verified } = engineImportProblems(
+      [check],
+      (_sibling, subpath) => tagExportsAt(read, 'packages/e2e', subpath),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /imports from e2e\/engine, but e2e@0\.22\.0 does not export that subpath/);
+    assert.deepEqual(unverifiable, []);
+    assert.equal(verified, 1);
+  });
+
   it('returns missing for a subpath the wildcard key is too short for', () => {
     const files = new Map([
       ['packages/e2e/package.json', JSON.stringify({ exports: { './lib/*': { types: './dist/*.d.ts', default: './dist/*.js' } } })],

@@ -431,49 +431,17 @@ function exportsMap(exports: Record<string, unknown> | undefined): Record<string
 }
 
 /**
- * The `exports` key covering `subpath`, picked the way resolve.exports
- * picks it: the exact key, else the longest `*` key whose pattern
- * matches, ties going to the later key. A trailing-slash key covers by
- * prefix, as in the library. Undefined when no key covers it.
- *
- * This is only the covering check resolve.exports cannot answer: it
- * throws the same `Missing ... specifier` error when no key covers the
- * subpath and when the covering key excludes it with `null`, and the
- * check must keep those apart (an excluded subpath is missing, a
- * covered subpath with no `types` target is unverifiable, see
- * `tagExportsAt`). The target itself always comes from resolve.exports,
- * never from this key.
+ * Whether an `exports` map covers `subpath` with a real target under the check's `types` resolution. resolve.exports resolves the covering key's selected conditional target the same way `exportTypesTarget` does, so a `null` the selected conditions reach, nested or not, counts as the sibling not exporting the subpath there. A covering key with a real target but no `types` target still counts as covered: the entry exists, only its types are missing, so the floor stays unverifiable (see `tagExportsAt`). resolve.exports throws both when no key covers the subpath and when the selected target is `null`; both are missing here, so either throw means false.
  */
-function coveringExportKey(exports: Record<string, unknown> | undefined, subpath: string): string | undefined {
-  const map = exportsMap(exports);
-  if (map === undefined) return undefined;
-  const key = exportKey(subpath);
-  if (map[key] !== undefined) return key;
-  let best: string | undefined;
-  for (const pattern of Object.keys(map)) {
-    if (best !== undefined && pattern.length < best.length) continue;
-    if (pattern.endsWith('/') && key.startsWith(pattern)) {
-      best = pattern;
-      continue;
-    }
-    const star = pattern.indexOf('*');
-    if (star === -1 || pattern.length <= 1) continue;
-    const prefix = pattern.slice(0, star);
-    const suffix = pattern.slice(star + 1);
-    // The `*` matches at least one character, so the key must be longer
-    // than the pattern without its `*`.
-    if (key.length - prefix.length - suffix.length < 1 || !key.startsWith(prefix) || !key.endsWith(suffix)) continue;
-    best = pattern;
-  }
-  return best;
-}
-
-/** Whether an `exports` map covers `subpath` at all: an exact key or a `*` key, with a target that is not `null`. Only the best covering key counts: a `null` target on it excludes the subpath, even when a shorter key would match. */
 function hasExportKey(exports: Record<string, unknown> | undefined, subpath: string): boolean {
   const map = exportsMap(exports);
   if (map === undefined) return false;
-  const best = coveringExportKey(map, subpath);
-  return best !== undefined && map[best] !== null;
+  try {
+    const targets = resolveExports({ name: '', exports: map }, exportKey(subpath), { conditions: ['types'] });
+    return targets !== undefined && targets.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** The entry file for a subpath from an already-parsed package manifest. */
