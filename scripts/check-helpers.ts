@@ -107,7 +107,77 @@ export interface ReleasePlanPackage {
   };
 }
 
-/** The `packages:` globs of `pnpm-workspace.yaml`, in order; empty when the file cannot be read. Only the simple list form is read: one glob per `- ` line. */
+/** The items of a flow sequence (`[a, 'b/*', "c"]`): commas split, quotes unwrap, and a `#` outside quotes starts a comment. */
+function flowItems(source: string): string[] {
+  const items: string[] = [];
+  let current = '';
+  let quote: string | undefined;
+  for (const char of source) {
+    if (quote !== undefined) {
+      if (char === quote) quote = undefined;
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '#') break;
+    if (char === ',') {
+      const item = current.trim();
+      if (item !== '') items.push(item);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  const item = current.trim();
+  if (item !== '') items.push(item);
+  return items;
+}
+
+/**
+ * The `packages:` globs in `text` (`pnpm-workspace.yaml`), in order: the
+ * block list form (one glob per `- ` line) and the flow sequence form
+ * (`packages: ['a/*', 'b/*']`, on one line or split across lines). A
+ * `packages:` line carrying only a comment still opens the block list.
+ * Anything else after `packages:` reads as no globs: only the list forms
+ * are workspace globs.
+ */
+export function parseWorkspaceGlobs(text: string): string[] {
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const head = /^packages:(.*)$/.exec(line);
+    if (head === null) continue;
+    const rest = head[1]!.trim();
+    if (rest === '' || rest.startsWith('#')) {
+      const globs: string[] = [];
+      for (i++; i < lines.length; i++) {
+        const itemLine = lines[i]!;
+        const item = /^  - ['"]?([^'"\s]+)['"]?\s*(?:#.*)?$/.exec(itemLine);
+        if (item?.[1] !== undefined) {
+          globs.push(item[1]);
+          continue;
+        }
+        if (itemLine.trim() === '' || itemLine.startsWith('#')) continue;
+        break;
+      }
+      return globs;
+    }
+    if (!rest.startsWith('[')) return [];
+    let source = rest.slice(1);
+    while (!source.includes(']') && i + 1 < lines.length) {
+      i++;
+      source += `\n${lines[i]!}`;
+    }
+    const close = source.indexOf(']');
+    return flowItems(close === -1 ? source : source.slice(0, close));
+  }
+  return [];
+}
+
+/** The `packages:` globs of `pnpm-workspace.yaml`, in order; empty when the file cannot be read. */
 function workspaceGlobs(): string[] {
   let text: string;
   try {
@@ -115,22 +185,7 @@ function workspaceGlobs(): string[] {
   } catch {
     return [];
   }
-  const globs: string[] = [];
-  let inPackages = false;
-  for (const line of text.split('\n')) {
-    if (!inPackages) {
-      if (/^packages:\s*$/.test(line)) inPackages = true;
-      continue;
-    }
-    const item = /^  - ['"]?([^'"\s]+)['"]?\s*(?:#.*)?$/.exec(line);
-    if (item?.[1] !== undefined) {
-      globs.push(item[1]);
-      continue;
-    }
-    if (line.trim() === '' || line.startsWith('#')) continue;
-    break;
-  }
-  return globs;
+  return parseWorkspaceGlobs(text);
 }
 
 /** The directories a workspace glob names: `dir/*` expands to its subdirectories, anything else is one directory. */

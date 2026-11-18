@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
-import { collectEngineImports, nextReleaseVersions, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
+import { collectEngineImports, nextReleaseVersions, parseWorkspaceGlobs, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
 import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
@@ -26,6 +26,33 @@ describe('collectEngineImports', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('parseWorkspaceGlobs', () => {
+  it('reads the block list form', () => {
+    assert.deepEqual(parseWorkspaceGlobs('packages:\n  - packages/*\n  - apps/*\n  - docs\n'), ['packages/*', 'apps/*', 'docs']);
+  });
+
+  it('reads a flow sequence on one line, quoted or bare', () => {
+    assert.deepEqual(parseWorkspaceGlobs("packages: ['packages/*', \"apps/*\", docs]\n"), ['packages/*', 'apps/*', 'docs']);
+  });
+
+  it('reads a flow sequence split across lines', () => {
+    assert.deepEqual(parseWorkspaceGlobs("packages: [\n  'packages/*',\n  'apps/*',\n]\n"), ['packages/*', 'apps/*']);
+  });
+
+  it('reads the block list when the packages line carries only a comment', () => {
+    assert.deepEqual(parseWorkspaceGlobs('packages: # the workspace\n  - packages/*\n  - apps/*\n'), ['packages/*', 'apps/*']);
+  });
+
+  it('reads a flow sequence with a trailing comment', () => {
+    assert.deepEqual(parseWorkspaceGlobs("packages: ['packages/*', 'apps/*'] # the workspace\n"), ['packages/*', 'apps/*']);
+  });
+
+  it('answers empty with no packages key or a non-list value', () => {
+    assert.deepEqual(parseWorkspaceGlobs('minimumReleaseAge: 0\n'), []);
+    assert.deepEqual(parseWorkspaceGlobs('packages: packages/*\n'), []);
   });
 });
 
