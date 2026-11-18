@@ -354,7 +354,7 @@ For `vision` and `screenshot` there, see the Note under
 The built-in agent offers one tool per verb the target's engine declares, and
 none for a verb it does not. A tool that targets a node takes its id from the
 newest observation. Every tool returns what changed on screen and is
-recorded for the [replay cache](/cache), with its node when it has one. When most of the screen changed, the result sends the whole new screen instead, listing every node in full: large unchanged subtrees are folded to one line only in MCP sessions. On an engine that declares
+recorded for the [replay cache](/cache), with its node when it has one. When most of the screen changed, the result sends the whole new screen instead. By default it lists every node in full; in MCP sessions, large unchanged subtrees are folded to one line each. On an engine that declares
 `tapModifiers`, `tap`, `double_tap`, and `right_click` take `modifiers`
 (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`) to hold keys for the
 click, as a Shift-click extends a selection.
