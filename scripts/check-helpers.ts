@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { assembleReleasePlan } from '@changesets/assemble-release-plan';
 import { readConfig } from '@changesets/config';
 import { parseChangesetFile } from '@changesets/parse';
-import { getPackages } from '@manypkg/get-packages';
+import { getPackages, type Packages } from '@manypkg/get-packages';
 import { addEngineImports, engineImports, type EngineImportMap, type ImportKind } from './engine-exports.ts';
 import { REPO_ROOT } from './public-packages.ts';
 import type { Changeset } from './changeset-bumps.ts';
@@ -25,10 +25,10 @@ export function showAtTag(tag: string, path: string): string | undefined {
   }
 }
 
-/** The tags matching `pattern` (`git tag --list`), empty when git cannot list them. */
-export function listTags(pattern: string): string[] {
+/** The tags matching `pattern` in `cwd` (`git tag --list`), empty when git cannot list them. */
+export function listTags(pattern: string, cwd: string = REPO_ROOT): string[] {
   try {
-    return execFileSync('git', ['tag', '--list', pattern], { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    return execFileSync('git', ['tag', '--list', pattern], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
       .split('\n')
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0);
@@ -37,9 +37,9 @@ export function listTags(pattern: string): string[] {
   }
 }
 
-/** Whether `name@version` has a release tag. */
-export function hasReleaseTag(name: string, version: string): boolean {
-  return listTags(`${name}@${version}`).length > 0;
+/** Whether `name@version` has a release tag in `cwd`. */
+export function hasReleaseTag(name: string, version: string, cwd: string = REPO_ROOT): boolean {
+  return listTags(`${name}@${version}`, cwd).length > 0;
 }
 
 /** The TypeScript files under `dirPath`, recursively; unreadable entries are skipped. */
@@ -99,27 +99,9 @@ export function pendingChangesets(): { file: string; changeset: ReturnType<typeo
   return files.map((file) => ({ file, changeset: parseChangesetFile(readFileSync(join(dir, file), 'utf8')) }));
 }
 
-/** A workspace package for the changesets release plan: its directory and manifest, dependency ranges included, since the plan bumps dependents whose ranges go out of range. */
-export interface ReleasePlanPackage {
-  readonly dir: string;
-  readonly packageJson: {
-    readonly name: string;
-    // Optional: a workspace package may ship no version at all
-    // (@e2e-dev/docs has none), so callers must not read this as a
-    // string without a guard. Changesets skips such a package instead
-    // of releasing it.
-    readonly version?: string;
-    readonly dependencies?: Record<string, string>;
-    readonly devDependencies?: Record<string, string>;
-    readonly peerDependencies?: Record<string, string>;
-    readonly optionalDependencies?: Record<string, string>;
-    readonly private?: boolean;
-  };
-}
-
 /** Every package in the workspace, private and version-less ones included: the release plan needs the whole workspace, since a changeset may name any of them. Read with the same `getPackages` changesets itself uses, so the check sees exactly the workspace `changeset version` sees. A version-less package (like `@e2e-dev/docs`) is skipped by the plan, not released. */
-export async function workspacePackages(): Promise<ReleasePlanPackage[]> {
-  return (await getPackages(REPO_ROOT)).packages;
+export async function workspacePackages(): Promise<Packages> {
+  return getPackages(REPO_ROOT);
 }
 
 /**
@@ -132,24 +114,9 @@ export async function workspacePackages(): Promise<ReleasePlanPackage[]> {
  * config must fail the check loudly, not read as no fixed groups.
  */
 export async function nextReleaseVersions(
-  packages: readonly ReleasePlanPackage[],
+  packages: Packages,
   changesets: readonly { file: string; changeset: Changeset }[],
-  cwd: string = REPO_ROOT,
 ): Promise<Map<string, string>> {
-  // The dependents graph is empty without a root package, so the plan
-  // cannot see dependents at all; read the root manifest for it.
-  let rootManifest: { name: string; version: string };
-  try {
-    rootManifest = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')) as { name: string; version: string };
-  } catch {
-    rootManifest = { name: '', version: '0.0.0' };
-  }
-  const planPackages = {
-    rootDir: cwd,
-    rootPackage: { dir: cwd, packageJson: rootManifest },
-    packages: packages.map((pkg) => ({ dir: pkg.dir, packageJson: pkg.packageJson })),
-    tool: { type: 'pnpm' },
-  } as Parameters<typeof assembleReleasePlan>[1];
   // changesets prints a line to stderr per dependent whose peer does not
   // name the sibling's current version yet, from both `readConfig` and
   // `assembleReleasePlan`; on a passing run those lines read as failures
@@ -165,7 +132,7 @@ export async function nextReleaseVersions(
   try {
     let read: Awaited<ReturnType<typeof readConfig>>;
     try {
-      read = await readConfig(cwd, planPackages);
+      read = await readConfig(packages.rootDir, packages);
     } catch (error) {
       // A malformed config throws out of readConfig instead of returning
       // errors, so catch it here and report it as a config failure.
@@ -181,7 +148,7 @@ export async function nextReleaseVersions(
         summary: changeset.summary,
         releases: changeset.releases,
       })),
-      planPackages,
+      packages,
       config,
       undefined,
     );

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
 import {
   announcesFloorRaise,
+  collectFloorRaiseInputs,
   disallowedBumps,
   floorRaiseProblems,
   floorRaisesPastMinor,
@@ -11,6 +12,7 @@ import {
   siblingMajorAnnounces,
   versionBumpAnnounces,
   type FloorRaiseInput,
+  type FloorRaiseReaders,
 } from './changeset-bumps.ts';
 
 const versions = new Map([
@@ -215,5 +217,51 @@ describe('parseVersion', () => {
     assert.deepEqual(parseVersion('0.23.0'), [0, 23, 0]);
     assert.equal(parseVersion('0.23.0-canary-x'), undefined);
     assert.equal(parseVersion('not semver'), undefined);
+  });
+});
+
+describe('collectFloorRaiseInputs', () => {
+  // Web raised its e2e floor 0.23.0 -> 1.0.0 on a patch changeset, past a
+  // released 0.23.1 the old range accepted. Whether that raise is a problem
+  // hangs on the `hasReleaseTag` call at the call site: while e2e 1.0.0
+  // has no tag the sibling major announces it, but once the tag exists
+  // the major has shipped and the raise needs its own **Breaking:** minor.
+  const packages = [
+    { path: '/repo/packages/e2e/package.json', manifest: { name: 'e2e', version: '1.0.0' } },
+    {
+      path: '/repo/packages/web/package.json',
+      manifest: { name: '@e2e-dev/web', version: '0.16.0', peerDependencies: { e2e: '>=1.0.0 <2' } },
+    },
+  ];
+  const changesByPackage = new Map([['@e2e-dev/web', [{ type: 'patch', summary: 'Fixes a thing.' } as const]]]);
+  const readers = (siblingReleased: boolean): FloorRaiseReaders => ({
+    listTags: () => [],
+    showAtTag: (tag: string) => {
+      if (tag === '@e2e-dev/web@0.16.0')
+        return JSON.stringify({ name: '@e2e-dev/web', version: '0.16.0', peerDependencies: { e2e: '>=0.23.0 <1' } });
+      if (tag === 'e2e@1.0.0') return JSON.stringify({ name: 'e2e', version: '1.0.0' });
+      return undefined;
+    },
+    hasReleaseTag: (name: string, version: string) => siblingReleased && name === 'e2e' && version === '1.0.0',
+    readChangelog: (packagePath: string) =>
+      packagePath === '/repo/packages/e2e/package.json' ? '## 1.0.0\n\n## 0.23.1\n\n## 0.23.0\n' : undefined,
+  });
+
+  it('fails the raise once the sibling major has a tag: the call site reads the tag', () => {
+    const { inputs, skipped } = collectFloorRaiseInputs(packages, changesByPackage, new Set(), readers(true), '/repo');
+    assert.equal(skipped, 0);
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0]!.announcedByVersionBump, false);
+    const problems = floorRaiseProblems(inputs);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /e2e peer floor rises 0\.23\.0 -> 1\.0\.0/);
+  });
+
+  it('passes the same raise while the sibling major has no tag yet', () => {
+    const { inputs, skipped } = collectFloorRaiseInputs(packages, changesByPackage, new Set(), readers(false), '/repo');
+    assert.equal(skipped, 0);
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0]!.announcedByVersionBump, true);
+    assert.deepEqual(floorRaiseProblems(inputs), []);
   });
 });

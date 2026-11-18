@@ -22,7 +22,10 @@
  * this check reads the changesets that must announce the raise.
  */
 
+import { relative } from 'node:path';
 import { parseChangesetFile } from '@changesets/parse';
+import { peerFloor, releasedVersions } from './peer-ranges.ts';
+import { isWidePeerRange, siblingPeers, type PackageManifest } from './public-packages.ts';
 
 export type Changeset = ReturnType<typeof parseChangesetFile>;
 
@@ -141,6 +144,89 @@ export interface FloorRaiseInput {
   readonly announcedByVersionBump: boolean;
 }
 
+/** The repo reads the floor-raise collection needs: tag lookups and the sibling changelog. The check script passes the real reads; tests pass stubs, so a stubbed `hasReleaseTag` returning true must change the result, which pins the call site. */
+export interface FloorRaiseReaders {
+  listTags(pattern: string): string[];
+  showAtTag(tag: string, path: string): string | undefined;
+  hasReleaseTag(name: string, version: string): boolean;
+  readChangelog(packagePath: string): string | undefined;
+}
+
+/**
+ * Every peer floor change in `packages` as a `FloorRaiseInput` for
+ * `floorRaiseProblems`, plus how many packages were skipped for want of a
+ * release tag or changelog. The previous floor is the one at the package's
+ * release tag, or at its previous released tag when the current version
+ * has none yet, as on a generated release PR.
+ */
+export function collectFloorRaiseInputs(
+  packages: readonly { path: string; manifest: PackageManifest }[],
+  changesByPackage: ReadonlyMap<string, readonly { type: BumpType; summary: string }[]>,
+  flagged: ReadonlySet<string>,
+  readers: FloorRaiseReaders,
+  rootDir: string,
+): { inputs: FloorRaiseInput[]; skipped: number } {
+  const byName = new Map(packages.map((pkg) => [pkg.manifest.name, pkg]));
+  const siblings = new Set(packages.map(({ manifest }) => manifest.name));
+  const inputs: FloorRaiseInput[] = [];
+  let skipped = 0;
+  const previousReleaseManifest = (name: string, packagePath: string): string | undefined => {
+    const latest = latestReleaseVersion(readers.listTags(`${name}@*`), name);
+    if (latest === undefined) return undefined;
+    return readers.showAtTag(`${name}@${latest}`, packagePath);
+  };
+  for (const { path, manifest } of packages) {
+    if (manifest.version === undefined) continue;
+    let tagManifest = readers.showAtTag(`${manifest.name}@${manifest.version}`, relative(rootDir, path));
+    const fellBack = tagManifest === undefined;
+    if (fellBack) tagManifest = previousReleaseManifest(manifest.name, relative(rootDir, path));
+    if (tagManifest === undefined) {
+      skipped += 1;
+      continue;
+    }
+    let previous: Partial<PackageManifest>;
+    try {
+      previous = JSON.parse(tagManifest) as Partial<PackageManifest>;
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    for (const [peer, range] of siblingPeers(manifest.peerDependencies, siblings)) {
+      if (!isWidePeerRange(range)) continue;
+      const currentFloor = peerFloor(range);
+      const previousRange = previous.peerDependencies?.[peer];
+      const previousFloor = previousRange === undefined ? undefined : peerFloor(previousRange);
+      if (currentFloor === undefined || previousFloor === undefined || currentFloor === previousFloor) continue;
+      const sibling = byName.get(peer);
+      if (sibling === undefined) continue;
+      const changelog = readers.readChangelog(sibling.path);
+      if (changelog === undefined) {
+        skipped += 1;
+        continue;
+      }
+      inputs.push({
+        name: manifest.name,
+        path: relative(rootDir, path),
+        peer,
+        previousFloor,
+        currentFloor,
+        released: releasedVersions(changelog),
+        changes: changesByPackage.get(manifest.name) ?? [],
+        alreadyFlagged: flagged.has(manifest.name),
+        announcedByVersionBump:
+          (fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version)) ||
+          // A sibling major moves every peer to `>=<major>.0.0 <major+1>`; the sibling's major is the announcement, but only while it is still unreleased: a tag for the sibling's version means the major has shipped, and a later floor raise to it needs its own **Breaking:** minor.
+          siblingMajorAnnounces(
+            previousFloor,
+            currentFloor,
+            sibling.manifest.version ?? '',
+            sibling.manifest.version !== undefined && readers.hasReleaseTag(peer, sibling.manifest.version),
+          ),
+      });
+    }
+  }
+  return { inputs, skipped };
+}
 /**
  * Every floor raise in `inputs` that no pending changeset announces as a
  * `**Breaking:**` minor. A package whose bump `disallowedBumps` already

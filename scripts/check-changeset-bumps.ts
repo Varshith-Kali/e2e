@@ -20,18 +20,9 @@
  * 1 listing every offending changeset.
  */
 
-import { relative } from 'node:path';
 import { hasReleaseTag, listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
-import { BREAKING, RELEASE, disallowedBumps, floorRaiseProblems, latestReleaseVersion, siblingMajorAnnounces, versionBumpAnnounces, type BumpType, type FloorRaiseInput } from './changeset-bumps.ts';
-import { peerFloor, releasedVersions } from './peer-ranges.ts';
-import { REPO_ROOT, isWidePeerRange, publicPackages, siblingPeers, type PackageManifest } from './public-packages.ts';
-
-/** The manifest at the package's latest released tag, undefined when it has no release tag. A generated release PR has already bumped the version, so the tag for the current version does not exist yet; the previous released manifest is the one to compare the floor against, instead of skipping the check. */
-function previousReleaseManifest(name: string, packagePath: string): string | undefined {
-  const latest = latestReleaseVersion(listTags(`${name}@*`), name);
-  if (latest === undefined) return undefined;
-  return showAtTag(`${name}@${latest}`, packagePath);
-}
+import { BREAKING, RELEASE, collectFloorRaiseInputs, disallowedBumps, floorRaiseProblems, type BumpType } from './changeset-bumps.ts';
+import { REPO_ROOT, publicPackages } from './public-packages.ts';
 
 const versions = new Map(publicPackages().flatMap(({ manifest }) => (manifest.version === undefined ? [] : [[manifest.name, manifest.version] as const])));
 const pending = pendingChangesets();
@@ -62,61 +53,13 @@ if (listTags('e2e@*').length === 0) {
   problems.push('no e2e@* tags exist; a peer floor cannot be compared against any released version, so the check fails instead of quietly skipping (fetch the tags: git fetch --tags)');
 }
 
-const packages = publicPackages();
-const byName = new Map(packages.map((pkg) => [pkg.manifest.name, pkg]));
-const siblings = new Set(packages.map(({ manifest }) => manifest.name));
-const inputs: FloorRaiseInput[] = [];
-let skipped = 0;
-for (const { path, manifest } of packages) {
-  if (manifest.version === undefined) continue;
-  let tagManifest = showAtTag(`${manifest.name}@${manifest.version}`, relative(REPO_ROOT, path));
-  const fellBack = tagManifest === undefined;
-  if (fellBack) tagManifest = previousReleaseManifest(manifest.name, relative(REPO_ROOT, path));
-  if (tagManifest === undefined) {
-    skipped += 1;
-    continue;
-  }
-  let previous: Partial<PackageManifest>;
-  try {
-    previous = JSON.parse(tagManifest) as Partial<PackageManifest>;
-  } catch {
-    skipped += 1;
-    continue;
-  }
-  for (const [peer, range] of siblingPeers(manifest.peerDependencies, siblings)) {
-    if (!isWidePeerRange(range)) continue;
-    const currentFloor = peerFloor(range);
-    const previousRange = previous.peerDependencies?.[peer];
-    const previousFloor = previousRange === undefined ? undefined : peerFloor(previousRange);
-    if (currentFloor === undefined || previousFloor === undefined || currentFloor === previousFloor) continue;
-    const sibling = byName.get(peer);
-    if (sibling === undefined) continue;
-    const changelog = readChangelog(sibling.path);
-    if (changelog === undefined) {
-      skipped += 1;
-      continue;
-    }
-    inputs.push({
-      name: manifest.name,
-      path: relative(REPO_ROOT, path),
-      peer,
-      previousFloor,
-      currentFloor,
-      released: releasedVersions(changelog),
-      changes: changesByPackage.get(manifest.name) ?? [],
-      alreadyFlagged: flagged.has(manifest.name),
-      announcedByVersionBump:
-        (fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version)) ||
-        // A sibling major moves every peer to `>=<major>.0.0 <major+1>` (restore-peer-ranges.ts); the sibling's major is the announcement, but only while it is still unreleased: a tag for the sibling's version means the major has shipped, and a later floor raise to it needs its own **Breaking:** minor.
-        siblingMajorAnnounces(
-          previousFloor,
-          currentFloor,
-          sibling.manifest.version ?? '',
-          sibling.manifest.version !== undefined && hasReleaseTag(peer, sibling.manifest.version),
-        ),
-    });
-  }
-}
+const { inputs, skipped } = collectFloorRaiseInputs(
+  publicPackages(),
+  changesByPackage,
+  flagged,
+  { listTags, showAtTag, hasReleaseTag, readChangelog },
+  REPO_ROOT,
+);
 problems.push(...floorRaiseProblems(inputs));
 
 if (problems.length > 0) {

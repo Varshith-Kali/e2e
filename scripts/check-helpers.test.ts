@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
-import { collectEngineImports, hasReleaseTag, nextReleaseVersions, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
+import { getPackages, type Packages } from '@manypkg/get-packages';
+import { collectEngineImports, hasReleaseTag, nextReleaseVersions, workspacePackages } from './check-helpers.ts';
 import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
@@ -31,19 +33,32 @@ describe('collectEngineImports', () => {
 
 describe('hasReleaseTag', () => {
   it('finds a released tag and misses an unreleased version', () => {
-    // e2e@0.23.0 is tagged; 99.99.99 never shipped, and docs has no
-    // release tags at all. Replacing the lookup with `false` must fail
-    // the first assertion: the sibling-major announcement in
+    // A temp repo with one tag, not the live repo: the test jobs check
+    // out at depth 1 with no tags, so reading the live repo's tags
+    // fails there. Replacing the lookup with `false` must fail the
+    // first assertion: the sibling-major announcement in
     // check-changeset-bumps.ts hangs on this call.
-    assert.equal(hasReleaseTag('e2e', '0.23.0'), true);
-    assert.equal(hasReleaseTag('e2e', '99.99.99'), false);
-    assert.equal(hasReleaseTag('@e2e-dev/docs', '0.0.0'), false);
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-release-tag-'));
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: dir });
+      execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@e2e.dev']);
+      execFileSync('git', ['-C', dir, 'config', 'user.name', 'e2e test']);
+      writeFileSync(join(dir, 'README.md'), 'test\n');
+      execFileSync('git', ['-C', dir, 'add', '.']);
+      execFileSync('git', ['-C', dir, 'commit', '--quiet', '-m', 'init']);
+      execFileSync('git', ['-C', dir, 'tag', 'e2e@0.23.0']);
+      assert.equal(hasReleaseTag('e2e', '0.23.0', dir), true);
+      assert.equal(hasReleaseTag('e2e', '99.99.99', dir), false);
+      assert.equal(hasReleaseTag('@e2e-dev/docs', '0.0.0', dir), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
 describe('workspacePackages', () => {
   it('reads the workspace packages with their versions', async () => {
-    const packages = await workspacePackages();
+    const { packages } = await workspacePackages();
     const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
     // Compare against each package's own manifest, not pinned versions:
     // the next Version Packages run bumps both, and a pinned version
@@ -60,7 +75,7 @@ describe('workspacePackages', () => {
   });
 
   it('reads the private apps too: a changeset may name any of them', async () => {
-    const packages = await workspacePackages();
+    const { packages } = await workspacePackages();
     const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
     const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'apps', 'testbed', 'package.json'), 'utf8')) as {
       name: string;
@@ -70,7 +85,7 @@ describe('workspacePackages', () => {
   });
 
   it('reads the version-less docs package too: a changeset may name it', async () => {
-    const packages = await workspacePackages();
+    const { packages } = await workspacePackages();
     const docs = packages.find((pkg) => pkg.packageJson.name === '@e2e-dev/docs');
     assert.ok(docs !== undefined);
     assert.equal(docs.packageJson.version, undefined);
@@ -81,14 +96,27 @@ describe('workspacePackages', () => {
 describe('nextReleaseVersions', () => {
   // The fixed group in the repo config: e2e and @e2e-dev/core release at
   // one version, the group's highest current version with its highest bump.
-  const e2e: ReleasePlanPackage = {
+  const e2e = {
     dir: 'packages/e2e',
     packageJson: { name: 'e2e', version: '0.23.1', dependencies: { '@e2e-dev/core': 'workspace:*' } },
   };
-  const core: ReleasePlanPackage = { dir: 'packages/core', packageJson: { name: '@e2e-dev/core', version: '0.0.0' } };
-  const web: ReleasePlanPackage = {
+  const core = { dir: 'packages/core', packageJson: { name: '@e2e-dev/core', version: '0.0.0' } };
+  const web = {
     dir: 'packages/web',
     packageJson: { name: '@e2e-dev/web', version: '0.16.0', peerDependencies: { e2e: '>=0.23.2 <1', '@e2e-dev/core': '>=0.23.2 <1' } },
+  };
+  /** A manypkg `Packages` object from fixture packages, with the workspace's real tool and root package. */
+  const packagesFor = async (
+    fixtures: readonly { dir: string; packageJson: { name: string; version: string; dependencies?: Record<string, string>; peerDependencies?: Record<string, string> } }[],
+  ): Promise<Packages> => {
+    const { tool, rootPackage } = await getPackages(REPO_ROOT);
+    assert.ok(rootPackage !== undefined);
+    return {
+      rootDir: REPO_ROOT,
+      rootPackage,
+      packages: fixtures.map((pkg) => ({ ...pkg, relativeDir: pkg.dir })),
+      tool,
+    };
   };
   const changeset = (file: string, frontmatter: string) => ({
     file,
@@ -99,7 +127,7 @@ describe('nextReleaseVersions', () => {
     // The repro from review: a core minor on top of the pending e2e patch
     // releases both at 0.24.0, not at the 0.23.2 the hand-rolled math gave.
     const versions = await nextReleaseVersions(
-      [e2e, core],
+      await packagesFor([e2e, core]),
       [changeset('e2e-patch.md', '"e2e": patch'), changeset('core-minor.md', '"@e2e-dev/core": minor')],
     );
     assert.equal(versions.get('e2e'), '0.24.0');
@@ -107,13 +135,13 @@ describe('nextReleaseVersions', () => {
   });
 
   it('releases an unbumped fixed-group member alongside the bumped one', async () => {
-    const versions = await nextReleaseVersions([e2e, core], [changeset('core-minor.md', '"@e2e-dev/core": minor')]);
+    const versions = await nextReleaseVersions(await packagesFor([e2e, core]), [changeset('core-minor.md', '"@e2e-dev/core": minor')]);
     assert.equal(versions.get('e2e'), '0.24.0');
     assert.equal(versions.get('@e2e-dev/core'), '0.24.0');
   });
 
   it('leaves packages outside the release alone', async () => {
-    const versions = await nextReleaseVersions([e2e, core, web], [changeset('web-patch.md', '"@e2e-dev/web": patch')]);
+    const versions = await nextReleaseVersions(await packagesFor([e2e, core, web]), [changeset('web-patch.md', '"@e2e-dev/web": patch')]);
     assert.equal(versions.get('@e2e-dev/web'), '0.16.1');
     assert.equal(versions.has('e2e'), false);
     assert.equal(versions.has('@e2e-dev/core'), false);
@@ -139,7 +167,7 @@ describe('nextReleaseVersions', () => {
       errors.push(args);
     };
     try {
-      const versions = await nextReleaseVersions([e2e, core, web], [changeset('web-patch.md', '"@e2e-dev/web": patch')]);
+      const versions = await nextReleaseVersions(await packagesFor([e2e, core, web]), [changeset('web-patch.md', '"@e2e-dev/web": patch')]);
       assert.equal(versions.get('@e2e-dev/web'), '0.16.1');
     } finally {
       console.error = originalError;
@@ -152,7 +180,9 @@ describe('nextReleaseVersions', () => {
     try {
       mkdirSync(join(dir, '.changeset'), { recursive: true });
       writeFileSync(join(dir, '.changeset', 'config.json'), '{not json');
-      await assert.rejects(nextReleaseVersions([e2e, core], [], dir), /cannot read \.changeset\/config\.json/);
+      // The config is read from the packages' root dir, so point the
+      // workspace there to make readConfig hit the malformed file.
+      await assert.rejects(nextReleaseVersions({ ...(await workspacePackages()), rootDir: dir }, []), /cannot read \.changeset\/config\.json/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
