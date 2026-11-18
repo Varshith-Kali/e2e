@@ -132,6 +132,25 @@ describe('engineImports', () => {
     assert.deepEqual(imports.get('engine'), new Map<string, ImportKind>([['*', 'value']]));
   });
 
+  it('reads inline import types as type imports', () => {
+    const imports = engineImports(
+      `export type A = import('e2e/engine').EngineDoctorCheck;\nexport type B = typeof import('e2e').test;\nexport type C = import('e2e/engine').A.B;\n`,
+    );
+    assert.deepEqual(
+      imports.get('engine'),
+      new Map<string, ImportKind>([
+        ['EngineDoctorCheck', 'type'],
+        ['A', 'type'],
+      ]),
+    );
+    assert.deepEqual(imports.get(''), new Map<string, ImportKind>([['test', 'type']]));
+  });
+
+  it('records an inline import type with no qualifier as the subpath with no names', () => {
+    const imports = engineImports(`export type D = import('e2e/engine');\n`);
+    assert.deepEqual(imports.get('engine'), new Map<string, ImportKind>());
+  });
+
   it('ignores imports from other packages', () => {
     assert.equal(engineImports(`import { z } from 'zod';\n`).size, 0);
   });

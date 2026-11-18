@@ -15,8 +15,8 @@
  * entry file off the sibling's `package.json` `exports`, `export *`
  * chains followed). A floor with no tag is unverifiable, not a failure.
  * A value import needs a value export; a type import is satisfied by
- * either kind. Type-only imports count as value imports, since the
- * package's published `.d.ts` names those types.
+ * either kind, and still needs the name at the floor, since the
+ * package's published `.d.ts` names it.
  */
 
 import { parseSync } from 'oxc-parser';
@@ -90,6 +90,14 @@ function importCallSource(node: unknown): string | undefined {
   const source = call.source;
   if (!isRecord(source) || source.type !== 'Literal' || typeof source.value !== 'string') return undefined;
   return source.value;
+}
+
+/** The first name of a `TSImportType` qualifier (`A` of `import('x').A.B`), undefined when there is none. */
+function firstQualifierName(qualifier: unknown): string | undefined {
+  if (!isRecord(qualifier)) return undefined;
+  if (qualifier.type === 'Identifier' && typeof qualifier.name === 'string') return qualifier.name;
+  if (qualifier.type === 'TSQualifiedName') return firstQualifierName(qualifier.left);
+  return undefined;
 }
 
 /** The module exports a destructuring pattern reads: the top-level keys of an object pattern, or undefined when the pattern cannot be enumerated (a rest element, a whole-module binding, or anything but an object pattern). A nested pattern reads a property of an export, not another export, so only top-level keys count. */
@@ -177,6 +185,20 @@ export function engineImports(source: string): EngineImportMap {
         subpath,
         names === undefined ? [['*', 'value']] : names.map((name): readonly [string, ImportKind] => [name, 'value']),
       );
+      return;
+    }
+    // An inline import type (`import('e2e/engine').Name`, `typeof
+    // import('e2e').test`) is a type import of the qualifier's first
+    // name, with no name when there is no qualifier; the subpath is
+    // recorded either way, since the module must exist at the floor.
+    if (node.type === 'TSImportType') {
+      const sourceNode = node.source;
+      if (!isRecord(sourceNode) || sourceNode.type !== 'Literal' || typeof sourceNode.value !== 'string') return;
+      const subpath = e2eSubpath(sourceNode.value);
+      if (subpath === undefined) return;
+      add(subpath, []);
+      const first = firstQualifierName(node.qualifier);
+      if (first !== undefined) add(subpath, [[first, 'type']]);
       return;
     }
     if (node.type !== 'ImportExpression' || handled.has(node)) return;
@@ -326,9 +348,12 @@ export type BareSpecifierResolver = (specifier: string) => string | undefined;
 
 /**
  * The export set of the entry file, split by kind, following `export *`
- * chains. A file reached through `export type *` contributes its types
- * only: a function or const there has no type meaning to re-export.
- * `readFile` reads a repo path (undefined when it has none); the caller
+ * chains. A file reached through `export type *` contributes its types,
+ * and its values as types: a function or const there has no value to
+ * re-export, but its name is usable as a type through `typeof`. A file
+ * reached through `export *` contributes no `default`: ESM `export *`
+ * never re-exports `default`, so only the entry file's own default
+ * counts. `readFile` reads a repo path (undefined when it has none); the caller
  * binds it to a version, for example `git show <tag>:<path>`.
  * A bare `export *` specifier is followed through `resolveBare` when one
  * is given: a re-export from another workspace package (for example
@@ -344,26 +369,36 @@ export function resolveEntryExports(
   const values = new Set<string>();
   const types = new Set<string>();
   const seen = new Set<string>();
-  const queue: [string, boolean][] = [[entryPath, false]];
+  // [file, typeOnly, viaStar]: `viaStar` is true when the file is
+  // reached through an `export *`, which never passes `default` through.
+  const queue: [string, boolean, boolean][] = [[entryPath, false, false]];
   while (queue.length > 0) {
     const next = queue.pop();
     if (next === undefined) continue;
-    const [file, typeOnly] = next;
-    const key = `${file}:${typeOnly ? 'type' : 'value'}`;
+    const [file, typeOnly, viaStar] = next;
+    const key = `${file}:${typeOnly ? 'type' : 'value'}:${viaStar ? 'star' : 'entry'}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const source = readFile(file);
     if (source === undefined) return undefined;
     const exported = exportedNames(source);
-    // A file reached through `export type *` contributes its types only,
-    // and a value star reached that way is followed as type-only too.
-    for (const name of exported.types) types.add(name);
-    if (!typeOnly) {
-      for (const name of exported.values) values.add(name);
+    // A file reached through `export type *` contributes its values as
+    // types only: a function or const there has no value to re-export,
+    // but its name is usable as a type through `typeof`. A value star
+    // reached that way is followed as type-only too. `export *` never
+    // passes `default` through, so a star-reached file contributes none.
+    for (const name of exported.types) {
+      if (viaStar && name === 'default') continue;
+      types.add(name);
+    }
+    for (const name of exported.values) {
+      if (viaStar && name === 'default') continue;
+      if (typeOnly) types.add(name);
+      else values.add(name);
     }
     const enqueue = (specifier: string, asType: boolean): void => {
       const target = specifier.startsWith('.') ? resolveModule(file, specifier) : resolveBare?.(specifier);
-      if (target !== undefined) queue.push([target, asType]);
+      if (target !== undefined) queue.push([target, asType, true]);
     };
     for (const specifier of exported.starModules) enqueue(specifier, typeOnly);
     for (const specifier of exported.typeStarModules) enqueue(specifier, true);

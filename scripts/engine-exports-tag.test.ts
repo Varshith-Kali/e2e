@@ -28,7 +28,10 @@ describe('exportedNames and resolveEntryExports', () => {
     ]);
     const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
     assert.deepEqual([...(exported?.values ?? [])].toSorted(), ['parseKey']);
-    assert.deepEqual([...(exported?.types ?? [])].toSorted(), ['KeyModifier']);
+    // The functions and const reached through `export type *` are types
+    // there, not values: a type-only import of one (for `typeof`) is
+    // satisfied, a value import is not.
+    assert.deepEqual([...(exported?.types ?? [])].toSorted(), ['KEY_MODIFIERS', 'KeyModifier', 'isKeyModifier', 'parseKey']);
   });
 
   it('does not count a value export-star reached through a type-star as a value export', () => {
@@ -39,7 +42,7 @@ describe('exportedNames and resolveEntryExports', () => {
     ]);
     const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
     assert.deepEqual([...(exported?.values ?? [])], []);
-    assert.deepEqual([...(exported?.types ?? [])].toSorted(), ['NodeRef']);
+    assert.deepEqual([...(exported?.types ?? [])].toSorted(), ['NodeRef', 'stepTimeout']);
   });
 
   it('exports only the namespace name for export star as', () => {
@@ -58,6 +61,26 @@ describe('exportedNames and resolveEntryExports', () => {
     ]);
     const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
     assert.deepEqual([...(exported?.values ?? [])].toSorted(), ['default', 'stepTimeout']);
+    assert.deepEqual([...(exported?.types ?? [])].toSorted(), []);
+  });
+
+  it('does not pass default through an export star', () => {
+    const files = new Map([
+      ['src/engine/index.ts', `export * from './star.ts';\n`],
+      ['src/engine/star.ts', `export default function d(): void {}\nexport const x = 1;\n`],
+    ]);
+    const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
+    assert.deepEqual([...(exported?.values ?? [])].toSorted(), ['x']);
+    assert.deepEqual([...(exported?.types ?? [])].toSorted(), []);
+  });
+
+  it('keeps the entry file default when it also stars another file', () => {
+    const files = new Map([
+      ['src/engine/index.ts', `export default function makeEngine(): void {}\nexport * from './star.ts';\n`],
+      ['src/engine/star.ts', `export default function d(): void {}\nexport const x = 1;\n`],
+    ]);
+    const exported = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
+    assert.deepEqual([...(exported?.values ?? [])].toSorted(), ['default', 'x']);
     assert.deepEqual([...(exported?.types ?? [])].toSorted(), []);
   });
 
@@ -939,7 +962,7 @@ describe('floor export checks with in-memory fixtures', () => {
     assert.deepEqual(withProblems, []);
   });
 
-  it('does not count a type-star re-export as a value export in fixture entries', () => {
+  it('counts a type-star re-export as a type, not a value, in fixture entries', () => {
     const files = new Map([
       ['src/engine/index.ts', `export type * from './contract.ts';\nexport { parseKey } from './contract.ts';\n`],
       [
@@ -949,7 +972,10 @@ describe('floor export checks with in-memory fixtures', () => {
     ]);
     const exportedAt = resolveEntryExports((path) => files.get(path), 'src/engine/index.ts');
     assert.equal(exportedAt?.values.has('isKeyModifier'), false);
-    assert.equal(exportedAt?.types.has('isKeyModifier'), false);
+    // A function reached through `export type *` has no value to
+    // re-export, but its name is usable as a type through `typeof`, so a
+    // type-only import of it is satisfied.
+    assert.equal(exportedAt?.types.has('isKeyModifier'), true);
     assert.equal(exportedAt?.values.has('parseKey'), true);
     assert.equal(exportedAt?.types.has('KeyModifier'), true);
   });
