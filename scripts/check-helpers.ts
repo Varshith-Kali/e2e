@@ -104,7 +104,11 @@ export interface ReleasePlanPackage {
   readonly dir: string;
   readonly packageJson: {
     readonly name: string;
-    readonly version: string;
+    // Optional: a workspace package may ship no version at all
+    // (@e2e-dev/docs has none), so callers must not read this as a
+    // string without a guard. Changesets skips such a package instead
+    // of releasing it.
+    readonly version?: string;
     readonly dependencies?: Record<string, string>;
     readonly devDependencies?: Record<string, string>;
     readonly peerDependencies?: Record<string, string>;
