@@ -777,7 +777,9 @@ trees, on both platforms, without a device.
   minor changeset (`scripts/check-changeset-bumps.ts`); a new `e2e/engine`
   import counts as a raise, so the check also fails any named import from `e2e`
   or an `e2e/*` entry the floor version does not export, read off the
-  `e2e@<version>` tag (a namespace import is reported as an unverifiable note
+  `e2e@<version>` tag, or off the working tree when the floor names the
+  version the sibling's pending changesets will release, since that tag does
+  not exist yet (a namespace import is reported as an unverifiable note
   instead, since its names cannot be enumerated, unless the floor version does
   not export that subpath at all, in which case it fails). Rule (c) covers
   `e2e` and `e2e/*` only: web and mobile now import the engine contract from
