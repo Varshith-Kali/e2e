@@ -8,6 +8,7 @@ import {
   floorRaisesPastMinor,
   latestReleaseVersion,
   parseVersion,
+  siblingMajorAnnounces,
   versionBumpAnnounces,
   type FloorRaiseInput,
 } from './changeset-bumps.ts';
@@ -173,6 +174,25 @@ describe('versionBumpAnnounces', () => {
   it('rejects versions that are not x.y.z', () => {
     assert.equal(versionBumpAnnounces('0.2.4', '0.3.0-canary-x'), false);
     assert.equal(versionBumpAnnounces('not semver', '0.3.0'), false);
+  });
+});
+
+describe('siblingMajorAnnounces', () => {
+  it('accepts a floor raise to a sibling major that has no tag yet', () => {
+    assert.equal(siblingMajorAnnounces('0.23.0', '1.0.0', '1.0.0', false), true);
+  });
+
+  it('rejects the same raise once the sibling major has shipped', () => {
+    assert.equal(siblingMajorAnnounces('0.23.0', '1.0.0', '1.0.0', true), false);
+  });
+
+  it('rejects a raise to a version that is not the sibling version, and a raise within one major', () => {
+    assert.equal(siblingMajorAnnounces('0.23.0', '1.0.0', '1.0.1', false), false);
+    assert.equal(siblingMajorAnnounces('0.23.0', '0.24.0', '0.24.0', false), false);
+  });
+
+  it('rejects versions that are not x.y.z', () => {
+    assert.equal(siblingMajorAnnounces('0.23.0', '1.0.0-canary-x', '1.0.0-canary-x', false), false);
   });
 });
 

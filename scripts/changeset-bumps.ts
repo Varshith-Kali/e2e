@@ -98,6 +98,22 @@ export function versionBumpAnnounces(previousVersion: string, currentVersion: st
   return false;
 }
 
+/**
+ * Whether a sibling major announces a peer floor raise to it: the sibling's
+ * major moves every peer to `>=<major>.0.0 <major+1>` while each engine gets
+ * only a patch bump, so the sibling's major is the announcement. Only while
+ * that major is still unreleased (`siblingReleased` false): once its tag
+ * exists the major has shipped, and a later floor raise to it is a breaking
+ * change of its own that needs a `**Breaking:**` minor.
+ */
+export function siblingMajorAnnounces(previousFloor: string, currentFloor: string, siblingVersion: string, siblingReleased: boolean): boolean {
+  const previous = parseVersion(previousFloor);
+  const current = parseVersion(currentFloor);
+  if (previous === undefined || current === undefined) return false;
+  if (siblingReleased) return false;
+  return siblingVersion === currentFloor && current[0] !== previous[0];
+}
+
 /** The latest released version of `name` among `tags` (`<name>@<x.y.z>`), undefined when none exists. The bump check falls back to it when the tag for a package's current version does not exist yet, which is exactly a generated release PR: `version-packages` has already bumped the version, so the current tag is missing and the previous released manifest is the one to compare the floor against. */
 export function latestReleaseVersion(tags: readonly string[], name: string): string | undefined {
   let latest: Semver | undefined;
@@ -121,7 +137,7 @@ export interface FloorRaiseInput {
   readonly released: ReadonlySet<string>;
   readonly changes: readonly { type: BumpType; summary: string }[];
   readonly alreadyFlagged: boolean;
-  /** The release carrying this floor change already bumped the package by a `0.x` minor or a major, or the sibling by a major, so its consumed changesets announced the raise. */
+  /** The release carrying this floor change already bumped the package by a `0.x` minor or a major, or the sibling by a major that is still unreleased, so its consumed changesets announced the raise. */
   readonly announcedByVersionBump: boolean;
 }
 

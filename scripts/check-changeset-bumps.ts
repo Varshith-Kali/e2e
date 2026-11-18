@@ -9,9 +9,12 @@
  * generated release PR the current version has no tag yet, so the previous
  * released tag is used instead, and the version bump from that tag counts
  * as the announcement when it is a `0.x` minor or a major. A sibling major
- * counts too: on a release PR the sibling's major moves every peer to
- * `>=<major>.0.0 <major+1>`, and each engine gets only a patch bump, so
- * the sibling's major is the announcement for those floors.
+ * counts too, but only while that major is still unreleased: on a release PR
+ * the sibling's major moves every peer to `>=<major>.0.0 <major+1>`, and
+ * each engine gets only a patch bump, so the sibling's major is the
+ * announcement for those floors. Once the tag for the sibling's version
+ * exists the major has shipped, and a later floor raise to it needs its
+ * own `**Breaking:**` minor.
  *
  * Usage: `node scripts/check-changeset-bumps.ts`, part of `pnpm check`. Exits
  * 1 listing every offending changeset.
@@ -19,7 +22,7 @@
 
 import { relative } from 'node:path';
 import { listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
-import { BREAKING, RELEASE, disallowedBumps, floorRaiseProblems, latestReleaseVersion, versionBumpAnnounces, type BumpType, type FloorRaiseInput } from './changeset-bumps.ts';
+import { BREAKING, RELEASE, disallowedBumps, floorRaiseProblems, latestReleaseVersion, siblingMajorAnnounces, versionBumpAnnounces, type BumpType, type FloorRaiseInput } from './changeset-bumps.ts';
 import { peerFloor, releasedVersions } from './peer-ranges.ts';
 import { REPO_ROOT, isWidePeerRange, publicPackages, siblingPeers, type PackageManifest } from './public-packages.ts';
 
@@ -104,8 +107,13 @@ for (const { path, manifest } of packages) {
       alreadyFlagged: flagged.has(manifest.name),
       announcedByVersionBump:
         (fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version)) ||
-        // A sibling major moves every peer to `>=<major>.0.0 <major+1>` (restore-peer-ranges.ts); the sibling's major is the announcement.
-        (sibling.manifest.version === currentFloor && currentFloor.split('.')[0] !== previousFloor.split('.')[0]),
+        // A sibling major moves every peer to `>=<major>.0.0 <major+1>` (restore-peer-ranges.ts); the sibling's major is the announcement, but only while it is still unreleased: a tag for the sibling's version means the major has shipped, and a later floor raise to it needs its own **Breaking:** minor.
+        siblingMajorAnnounces(
+          previousFloor,
+          currentFloor,
+          sibling.manifest.version ?? '',
+          sibling.manifest.version !== undefined && listTags(`${peer}@${sibling.manifest.version}`).length > 0,
+        ),
     });
   }
 }
