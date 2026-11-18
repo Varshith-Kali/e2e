@@ -232,7 +232,7 @@ describe('exportedNames and resolveEntryExports', () => {
       ],
       [
         'packages/core/src/agent/public.ts',
-        `export { defineTool, type DefinedTool, type ToolAnnotations } from './tool.ts';\n`,
+        `export * from './tool.ts';\n`,
       ],
       ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\nexport interface DefinedTool {}\nexport interface ToolAnnotations {}\n`],
     ]);
@@ -396,6 +396,17 @@ describe('tagExportsAt', () => {
 
   it('returns missing for a subpath the tag does not export', () => {
     assert.equal(tagExportsAt(readAtTag, 'packages/e2e', 'agent'), 'missing');
+  });
+
+  it('returns missing for a manifest with no exports map', () => {
+    // A manifest without `exports` has no key covering any subpath, so
+    // the subpath reads as missing, not unverifiable: resolve.exports
+    // returns no targets for it.
+    const files = new Map([['packages/e2e/package.json', JSON.stringify({ name: 'e2e' })]]);
+    assert.equal(
+      tagExportsAt((path) => files.get(path), 'packages/e2e', 'agent'),
+      'missing',
+    );
   });
 
   it('returns empty sets, not missing, for an entry that exports nothing', () => {
@@ -622,9 +633,9 @@ describe('tagExportsAt', () => {
       ],
       [
         'packages/core/src/agent/public.ts',
-        `export { defineTool, type DefinedTool } from './tool.ts';\n`,
+        `export * from './tool.ts';\n`,
       ],
-      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\\nexport interface DefinedTool {}\\n`],
+      ['packages/core/src/agent/tool.ts', `export function defineTool(): void {}\nexport interface DefinedTool {}\n`],
     ]);
     const read = (path: string): string | undefined => files.get(path);
     const dirs = new Map([
