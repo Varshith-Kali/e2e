@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { assembleReleasePlan } from '@changesets/assemble-release-plan';
 import { readConfig } from '@changesets/config';
 import { parseChangesetFile } from '@changesets/parse';
+import { getPackages } from '@manypkg/get-packages';
 import { addEngineImports, engineImports, type EngineImportMap, type ImportKind } from './engine-exports.ts';
 import { REPO_ROOT } from './public-packages.ts';
 import type { Changeset } from './changeset-bumps.ts';
@@ -34,6 +35,11 @@ export function listTags(pattern: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** Whether `name@version` has a release tag. */
+export function hasReleaseTag(name: string, version: string): boolean {
+  return listTags(`${name}@${version}`).length > 0;
 }
 
 /** The TypeScript files under `dirPath`, recursively; unreadable entries are skipped. */
@@ -107,129 +113,9 @@ export interface ReleasePlanPackage {
   };
 }
 
-/** The items of a flow sequence (`[a, 'b/*', "c"]`): commas split, quotes unwrap, and a `#` outside quotes starts a comment. */
-function flowItems(source: string): string[] {
-  const items: string[] = [];
-  let current = '';
-  let quote: string | undefined;
-  for (const char of source) {
-    if (quote !== undefined) {
-      if (char === quote) quote = undefined;
-      else current += char;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-    if (char === '#') break;
-    if (char === ',') {
-      const item = current.trim();
-      if (item !== '') items.push(item);
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  const item = current.trim();
-  if (item !== '') items.push(item);
-  return items;
-}
-
-/**
- * The `packages:` globs in `text` (`pnpm-workspace.yaml`), in order: the
- * block list form (one glob per `- ` line) and the flow sequence form
- * (`packages: ['a/*', 'b/*']`, on one line or split across lines). A
- * `packages:` line carrying only a comment still opens the block list.
- * Anything else after `packages:` reads as no globs: only the list forms
- * are workspace globs.
- */
-export function parseWorkspaceGlobs(text: string): string[] {
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const head = /^packages:(.*)$/.exec(line);
-    if (head === null) continue;
-    const rest = head[1]!.trim();
-    if (rest === '' || rest.startsWith('#')) {
-      const globs: string[] = [];
-      for (i++; i < lines.length; i++) {
-        const itemLine = lines[i]!;
-        const item = /^  - ['"]?([^'"\s]+)['"]?\s*(?:#.*)?$/.exec(itemLine);
-        if (item?.[1] !== undefined) {
-          globs.push(item[1]);
-          continue;
-        }
-        if (itemLine.trim() === '' || itemLine.startsWith('#')) continue;
-        break;
-      }
-      return globs;
-    }
-    if (!rest.startsWith('[')) return [];
-    let source = rest.slice(1);
-    while (!source.includes(']') && i + 1 < lines.length) {
-      i++;
-      source += `\n${lines[i]!}`;
-    }
-    const close = source.indexOf(']');
-    return flowItems(close === -1 ? source : source.slice(0, close));
-  }
-  return [];
-}
-
-/** The `packages:` globs of `pnpm-workspace.yaml`, in order; empty when the file cannot be read. */
-function workspaceGlobs(): string[] {
-  let text: string;
-  try {
-    text = readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8');
-  } catch {
-    return [];
-  }
-  return parseWorkspaceGlobs(text);
-}
-
-/** The directories a workspace glob names: `dir/*` expands to its subdirectories, anything else is one directory. */
-function expandWorkspaceGlob(glob: string): string[] {
-  if (glob.endsWith('/*')) {
-    let entries: string[];
-    try {
-      entries = readdirSync(join(REPO_ROOT, glob.slice(0, -2)));
-    } catch {
-      return [];
-    }
-    return entries
-      .map((entry) => join(REPO_ROOT, glob.slice(0, -2), entry))
-      .filter((path) => {
-        try {
-          return statSync(path).isDirectory();
-        } catch {
-          return false;
-        }
-      });
-  }
-  return [join(REPO_ROOT, glob)];
-}
-
-/** Every named package in the workspace, private ones included: the release plan needs the whole workspace, since a changeset may name any of them. The directories come from the `packages:` globs in `pnpm-workspace.yaml`, not just `packages/*`: the private apps live under `apps/*`, and a changeset naming one of them must not crash the plan. */
-export function workspacePackages(): ReleasePlanPackage[] {
-  const packages: ReleasePlanPackage[] = [];
-  const seen = new Set<string>();
-  for (const glob of workspaceGlobs()) {
-    for (const dir of expandWorkspaceGlob(glob)) {
-      if (seen.has(dir)) continue;
-      seen.add(dir);
-      const path = join(dir, 'package.json');
-      let manifest: Partial<ReleasePlanPackage['packageJson']>;
-      try {
-        manifest = JSON.parse(readFileSync(path, 'utf8')) as Partial<ReleasePlanPackage['packageJson']>;
-      } catch {
-        continue;
-      }
-      if (manifest.name === undefined || manifest.version === undefined) continue;
-      packages.push({ dir, packageJson: manifest as ReleasePlanPackage['packageJson'] });
-    }
-  }
-  return packages;
+/** Every package in the workspace, private and version-less ones included: the release plan needs the whole workspace, since a changeset may name any of them. Read with the same `getPackages` changesets itself uses, so the check sees exactly the workspace `changeset version` sees. A version-less package (like `@e2e-dev/docs`) is skipped by the plan, not released. */
+export async function workspacePackages(): Promise<ReleasePlanPackage[]> {
+  return (await getPackages(REPO_ROOT)).packages;
 }
 
 /**
@@ -263,11 +149,14 @@ export async function nextReleaseVersions(
   // changesets prints a line to stderr per dependent whose peer does not
   // name the sibling's current version yet, from both `readConfig` and
   // `assembleReleasePlan`; on a passing run those lines read as failures
-  // in the check log, so they stay inside this call. A real failure still
-  // throws, or comes back in the `errors` array, so silencing the log
-  // hides no error.
+  // in the check log, so only that expected message stays inside this
+  // call. Anything else still reaches stderr: a real failure throws, or
+  // comes back in the `errors` array, and unexpected output stays visible.
   const originalError = console.error;
-  console.error = () => {};
+  console.error = (...args: unknown[]) => {
+    if (args.map((arg) => String(arg)).join(' ').includes('must depend on the current version')) return;
+    originalError(...args);
+  };
   let plan: ReturnType<typeof assembleReleasePlan>;
   try {
     let read: Awaited<ReturnType<typeof readConfig>>;

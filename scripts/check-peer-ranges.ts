@@ -43,7 +43,7 @@ for (const { manifest } of packages) {
 // `e2e` and `@e2e-dev/core` release together, and the core package's first
 // release is the runner's next version, not a `0.0.1` patch of its own.
 const pending = pendingChangesets();
-const nextVersions = await nextReleaseVersions(workspacePackages(), pending);
+const nextVersions = await nextReleaseVersions(await workspacePackages(), pending);
 
 const problems = peerRangeProblems(packages, readChangelog, nextVersions);
 

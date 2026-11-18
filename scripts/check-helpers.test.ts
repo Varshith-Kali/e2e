@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
-import { collectEngineImports, nextReleaseVersions, parseWorkspaceGlobs, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
+import { collectEngineImports, hasReleaseTag, nextReleaseVersions, workspacePackages, type ReleasePlanPackage } from './check-helpers.ts';
 import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
@@ -29,36 +29,21 @@ describe('collectEngineImports', () => {
   });
 });
 
-describe('parseWorkspaceGlobs', () => {
-  it('reads the block list form', () => {
-    assert.deepEqual(parseWorkspaceGlobs('packages:\n  - packages/*\n  - apps/*\n  - docs\n'), ['packages/*', 'apps/*', 'docs']);
-  });
-
-  it('reads a flow sequence on one line, quoted or bare', () => {
-    assert.deepEqual(parseWorkspaceGlobs("packages: ['packages/*', \"apps/*\", docs]\n"), ['packages/*', 'apps/*', 'docs']);
-  });
-
-  it('reads a flow sequence split across lines', () => {
-    assert.deepEqual(parseWorkspaceGlobs("packages: [\n  'packages/*',\n  'apps/*',\n]\n"), ['packages/*', 'apps/*']);
-  });
-
-  it('reads the block list when the packages line carries only a comment', () => {
-    assert.deepEqual(parseWorkspaceGlobs('packages: # the workspace\n  - packages/*\n  - apps/*\n'), ['packages/*', 'apps/*']);
-  });
-
-  it('reads a flow sequence with a trailing comment', () => {
-    assert.deepEqual(parseWorkspaceGlobs("packages: ['packages/*', 'apps/*'] # the workspace\n"), ['packages/*', 'apps/*']);
-  });
-
-  it('answers empty with no packages key or a non-list value', () => {
-    assert.deepEqual(parseWorkspaceGlobs('minimumReleaseAge: 0\n'), []);
-    assert.deepEqual(parseWorkspaceGlobs('packages: packages/*\n'), []);
+describe('hasReleaseTag', () => {
+  it('finds a released tag and misses an unreleased version', () => {
+    // e2e@0.23.0 is tagged; 99.99.99 never shipped, and docs has no
+    // release tags at all. Replacing the lookup with `false` must fail
+    // the first assertion: the sibling-major announcement in
+    // check-changeset-bumps.ts hangs on this call.
+    assert.equal(hasReleaseTag('e2e', '0.23.0'), true);
+    assert.equal(hasReleaseTag('e2e', '99.99.99'), false);
+    assert.equal(hasReleaseTag('@e2e-dev/docs', '0.0.0'), false);
   });
 });
 
 describe('workspacePackages', () => {
-  it('reads the workspace packages with their versions', () => {
-    const packages = workspacePackages();
+  it('reads the workspace packages with their versions', async () => {
+    const packages = await workspacePackages();
     const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
     // Compare against each package's own manifest, not pinned versions:
     // the next Version Packages run bumps both, and a pinned version
@@ -74,14 +59,22 @@ describe('workspacePackages', () => {
     }
   });
 
-  it('reads the private apps too: a changeset may name any of them', () => {
-    const packages = workspacePackages();
+  it('reads the private apps too: a changeset may name any of them', async () => {
+    const packages = await workspacePackages();
     const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
     const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'apps', 'testbed', 'package.json'), 'utf8')) as {
       name: string;
       version: string;
     };
     assert.equal(byName.get(manifest.name), manifest.version);
+  });
+
+  it('reads the version-less docs package too: a changeset may name it', async () => {
+    const packages = await workspacePackages();
+    const docs = packages.find((pkg) => pkg.packageJson.name === '@e2e-dev/docs');
+    assert.ok(docs !== undefined);
+    assert.equal(docs.packageJson.version, undefined);
+    assert.equal(docs.dir, join(REPO_ROOT, 'docs'));
   });
 });
 
@@ -124,6 +117,16 @@ describe('nextReleaseVersions', () => {
     assert.equal(versions.get('@e2e-dev/web'), '0.16.1');
     assert.equal(versions.has('e2e'), false);
     assert.equal(versions.has('@e2e-dev/core'), false);
+  });
+
+  it('does not crash on a changeset naming the version-less docs package', async () => {
+    // The repro from review: a docs patch changeset made the check exit 1
+    // with "Found changeset zz-x for package @e2e-dev/docs which is not
+    // in the workspace", because the workspace reader skipped packages
+    // without a version. Changesets skips a version-less package instead
+    // of releasing it, so the plan comes back with no release for docs.
+    const versions = await nextReleaseVersions(await workspacePackages(), [changeset('zz-x.md', '"@e2e-dev/docs": patch')]);
+    assert.equal(versions.has('@e2e-dev/docs'), false);
   });
 
   it('keeps the changesets out-of-range warnings off stderr', async () => {

@@ -21,7 +21,7 @@
  */
 
 import { relative } from 'node:path';
-import { listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
+import { hasReleaseTag, listTags, pendingChangesets, readChangelog, showAtTag } from './check-helpers.ts';
 import { BREAKING, RELEASE, disallowedBumps, floorRaiseProblems, latestReleaseVersion, siblingMajorAnnounces, versionBumpAnnounces, type BumpType, type FloorRaiseInput } from './changeset-bumps.ts';
 import { peerFloor, releasedVersions } from './peer-ranges.ts';
 import { REPO_ROOT, isWidePeerRange, publicPackages, siblingPeers, type PackageManifest } from './public-packages.ts';
@@ -112,7 +112,7 @@ for (const { path, manifest } of packages) {
           previousFloor,
           currentFloor,
           sibling.manifest.version ?? '',
-          sibling.manifest.version !== undefined && listTags(`${peer}@${sibling.manifest.version}`).length > 0,
+          sibling.manifest.version !== undefined && hasReleaseTag(peer, sibling.manifest.version),
         ),
     });
   }
