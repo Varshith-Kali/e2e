@@ -28,7 +28,7 @@
  */
 
 import type { ToolResultPart } from 'ai';
-import type { ExecutorObservation, ExecutorPixels, StepExecutorContext } from './executor.ts';
+import type { ExecutorObservation, ExecutorPixels } from './executor.ts';
 import { sha256Hex } from '../internal/ids.ts';
 import { interactiveNodeCount, pixelDigest } from './observation.ts';
 import type { VisionDegradation } from '../run/steps.ts';
@@ -44,12 +44,6 @@ const MIN_FOLD_NODES = 10;
 
 /** Every full screen is introduced by this phrase; the transcript elision looks for it. */
 export const FULL_SCREEN_PATTERN = /Current screen \(revision /;
-
-/** A full screen's heading with its revision: `Current screen (revision b1, ...`; the transcript elision reads it. */
-export const SCREEN_REVISION_PATTERN = /Current screen \(revision ([^,)]+),/;
-
-/** A fold line's dependency: `(12 nodes inside, unchanged since revision b1)`; the transcript elision looks for it. No `/g`, so a later `.test()` or `.exec()` call is not stateful; a caller that needs every match builds its own global copy. */
-export const FOLD_DEPENDENCY_PATTERN = /\(\d+ nodes inside, unchanged since revision ([^)]+)\)/;
 
 /** The screen as the model last received it, indexed for comparison. */
 interface ShownScreen {
@@ -245,15 +239,6 @@ export class ScreenPresenter {
   }
 
   /**
-   * Forgets every subtree the model last saw whole. The overflow retry cuts
-   * the screens those records name, so the next full render lists everything
-   * in full instead of folding against text the model no longer holds.
-   */
-  clearFoldRecords(): void {
-    this.fullyShown.clear();
-  }
-
-  /**
    * Records the subtrees a full render listed in full or folded, and drops
    * every other record. Called with no map by a render that listed nothing
    * in full, a diff or an unchanged screen, which only prunes: a subtree
@@ -407,96 +392,6 @@ export class ScreenPresenter {
     if (observation.pixelsWithheld === undefined) return text;
     return `${text}\n\nNo screenshot: ${withheldAdvice(observation.pixelsWithheld)}`;
   }
-}
-
-/**
- * One presenter per loop run, stacked on the step's context for the run, so
- * the presenter state matches that run's transcript alone: two loops run
- * against one step context each see their own first screen, and a run nested
- * inside another run's tool reads its own. Tools built outside a run read
- * the top binding while one is in progress, else use a presenter of their
- * own. Keyed by the step's context object, so a run's presenter dies with it.
- */
-const presenterStacks = new WeakMap<StepExecutorContext, ScreenPresenter[]>();
-
-/**
- * Every presenter that renders a screen for a step context: the loop runs'
- * bound presenters and the presenters the grammar tools render through, so
- * an overflow shrink can forget the folds of each one. Keyed by the step's
- * context object, so the entries die with it.
- */
-const presentersByContext = new WeakMap<StepExecutorContext, Set<ScreenPresenter>>();
-
-/** Remembers a presenter as one that renders screens for the step context. */
-export function registerPresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
-  let presenters = presentersByContext.get(context);
-  if (presenters === undefined) {
-    presenters = new Set();
-    presentersByContext.set(context, presenters);
-  }
-  presenters.add(presenter);
-}
-
-/**
- * Forgets the folds of every presenter that rendered a screen for the step
- * context: the run's own presenter and the presenters its tools render
- * through, including a toolset built before the run. The shrink cuts the
- * screens those records name, so the next screen renders in full. A run
- * that shares the context only loses its folds, never its screen: its next
- * look lists a folded subtree in full once, which is always correct.
- */
-export function clearFoldRecordsFor(context: StepExecutorContext): void {
-  for (const presenter of presentersByContext.get(context) ?? []) presenter.clearFoldRecords();
-}
-
-/**
- * The loop run's presenter, or a fresh presenter of its own when no run
- * bound one: the opening prompt inside a run reads the run's presenter, and
- * a prompt built outside a run never shares screen state with one.
- */
-export function presenterFor(context: StepExecutorContext): ScreenPresenter {
-  const bound = boundPresenter(context);
-  if (bound !== undefined) return bound;
-  const presenter = new ScreenPresenter();
-  registerPresenter(context, presenter);
-  return presenter;
-}
-
-/** The presenter the innermost loop run bound to the step's context, if one bound one: reads only, never creates. */
-export function boundPresenter(context: StepExecutorContext): ScreenPresenter | undefined {
-  return presenterStacks.get(context)?.at(-1);
-}
-
-/**
- * Binds a fresh presenter to the step's context, pushed onto the stack above
- * whatever runs already bound, and returns it. A loop run binds one at the
- * start of its run, so each run starts from a screen its own model has seen,
- * and removes its own presenter when the run ends. `presenterFor` stays the
- * fallback for the opening prompt inside a run.
- */
-export function bindPresenter(context: StepExecutorContext): ScreenPresenter {
-  const presenter = new ScreenPresenter();
-  registerPresenter(context, presenter);
-  const stack = presenterStacks.get(context);
-  if (stack === undefined) presenterStacks.set(context, [presenter]);
-  else stack.push(presenter);
-  return presenter;
-}
-
-/**
- * Removes the loop run's own presenter from the stack when the run ends, by
- * identity: a run that ends while another run is still bound above it leaves
- * that run's presenter in place, and a run that ends after an overlapping
- * run never puts back a presenter whose run is over. Tools built outside a
- * loop then find no binding and use a presenter of their own.
- */
-export function unbindPresenter(context: StepExecutorContext, presenter: ScreenPresenter): void {
-  const stack = presenterStacks.get(context);
-  if (stack === undefined) return;
-  const index = stack.lastIndexOf(presenter);
-  if (index === -1) return;
-  stack.splice(index, 1);
-  if (stack.length === 0) presenterStacks.delete(context);
 }
 
 /** The line under a screenshot: its pixel size and the coordinate space the point verbs read. */

@@ -16,7 +16,7 @@ import type { ExecutorObservation, ExecutorObserveOptions, ReplayedPrefix, StepE
 import { interactiveNodeCount } from './observation.ts';
 import { testTitleLine } from './prompts.ts';
 import { grammarTools } from './primitives.ts';
-import { presenterFor, type ScreenPresenter } from './screen-update.ts';
+import { ScreenPresenter } from './screen-update.ts';
 import { compactScreenHistory, compactScreenshotHistory } from './transcript-compaction.ts';
 import { createToolLoopExecutor, type ToolLoopHelpers } from './tool-loop.ts';
 import { toolAppliesTo, withToolContext } from './tool.ts';
@@ -53,6 +53,18 @@ const ASSERT_RULES = `You are judging exactly one assertion against the current 
 - Each scroll result contains a fresh observation. When screenshots are shown, each result includes fresh pixels too.
 - Conclude passed when the collected evidence establishes the assertion, failed with ASSERTION_FAILED when it contradicts the assertion, and failed with ASSERTION_INCONCLUSIVE when the available evidence or remaining budget cannot establish an answer.`;
 
+/** One presenter per dispatched step, shared by the opening prompt and the tools that follow it. */
+const presenters = new WeakMap<StepExecutorContext, ScreenPresenter>();
+
+function presenterFor(context: StepExecutorContext): ScreenPresenter {
+  let presenter = presenters.get(context);
+  if (presenter === undefined) {
+    presenter = new ScreenPresenter();
+    presenters.set(context, presenter);
+  }
+  return presenter;
+}
+
 /** What the built-in agent is built from: an agents entry's `system` and its validated `tools`. */
 export interface BuiltInAgentOptions {
   /** Appended to the built-in execution rules; read by act and exploring assert loops. */
@@ -80,11 +92,6 @@ function createActLoop(options: BuiltInAgentOptions): StepExecutor {
     prepareMessages: (messages) => compactScreenshotHistory(compactScreenHistory(messages)),
     tools: (context, helpers) => loopTools(context, helpers, options.tools),
     buildPrompt: async (context) => {
-      // The run's presenter is read before the first await: another run on
-      // this context may bind its own presenter while this one waits on
-      // observe, and the opening prompt must read this run's, not the other
-      // run's.
-      const presenter = presenterFor(context);
       // The opening look is tree-only, unless no listed interactive node
       // exists at all: then the opening prompt carries a screenshot, because the tree describes a canvas, a game,
       // or a semantics-free native screen too poorly to act on, and the model
@@ -99,7 +106,7 @@ function createActLoop(options: BuiltInAgentOptions): StepExecutor {
       if (secrets !== undefined) extra.push(secrets);
       if (context.replayedPrefix !== undefined) extra.push(formatReplayedPrefix(context.replayedPrefix));
       if (context.ledger !== '') extra.push(`Previously completed steps:\n${context.ledger}`);
-      return openingPrompt(context, `Execute this test step: ${context.step.instruction}`, extra, observation, presenter);
+      return openingPrompt(context, `Execute this test step: ${context.step.instruction}`, extra, observation);
     },
   });
 }
@@ -115,11 +122,8 @@ function createAssertionLoop(options: BuiltInAgentOptions): StepExecutor {
     system: rules(ASSERT_RULES, options.system),
     inconclusiveOnOverflow: true,
     tools: (context, helpers) => loopTools(context, helpers, options.tools),
-    buildPrompt: async (context) => {
-      // The run's presenter is read before the first await, as the act loop does.
-      const presenter = presenterFor(context);
-      return openingPrompt(context, `Judge whether this assertion holds: ${context.step.instruction}`, [], await context.observe(), presenter);
-    },
+    buildPrompt: async (context) =>
+      openingPrompt(context, `Judge whether this assertion holds: ${context.step.instruction}`, [], await context.observe()),
   });
   return { ...loop, runStep: (context) => loop.runStep(withVision(context)) };
 }
@@ -155,7 +159,7 @@ function loopTools(
 ): ToolSet {
   return {
     ...guardedTools(helpers, projectTools(context, tools)),
-    ...grammarTools(context, { guard: helpers.guard, secretsListedByCaller: true }),
+    ...grammarTools(context, { guard: helpers.guard, screen: presenterFor(context), secretsListedByCaller: true }),
   };
 }
 
@@ -175,7 +179,6 @@ function openingPrompt(
   lead: string,
   extra: readonly string[],
   observation: ExecutorObservation,
-  presenter: ScreenPresenter,
 ): string | ModelMessage[] {
   const title = testTitleLine(context.attempt.titlePath);
   const parts = [
@@ -184,7 +187,7 @@ function openingPrompt(
     ...(context.step.params === undefined ? [] : [`Step parameters:\n${JSON.stringify(context.step.params)}`]),
     ...extra,
   ];
-  const opening = presenter.open(observation);
+  const opening = presenterFor(context).open(observation);
   if (typeof opening === 'string') return [...parts, opening].join('\n\n');
   return [
     {

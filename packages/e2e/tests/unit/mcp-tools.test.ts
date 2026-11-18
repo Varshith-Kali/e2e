@@ -7,6 +7,7 @@ import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { TestError } from '@e2e-dev/core/lib/internal/errors';
 import { createSessionCatalog } from '../../src/session-tools/catalog.ts';
+import { createSessionScreenPresenter } from '../../src/mcp/session.ts';
 import { catalogLine, describeToolDetail, errorResult, invokeTool, resultFromOutput, toolJsonSchema, type McpToolResult } from '../../src/session-tools/tools.ts';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
 
@@ -250,7 +251,7 @@ describe('session catalog folding', () => {
     };
     const { tools } = createSessionCatalog({
       context: scripted,
-      screen: new ScreenPresenter({ foldUnchangedSubtrees: true }),
+      screen: createSessionScreenPresenter(),
       locator: { resolveNow: async () => [] } as never,
       session: {} as never,
       tools: {},

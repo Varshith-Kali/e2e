@@ -53,16 +53,6 @@ function toolOutput(message: ModelMessage): ToolResultPart['output'] {
   return part!.output;
 }
 
-/** The full-screen text a tool message's result carries. */
-function screenText(message: ModelMessage): string {
-  const output = toolOutput(message);
-  if (output.type === 'text') return output.value;
-  if (output.type !== 'content') throw new Error('expected a tool result carrying a full screen');
-  const textItem = output.value.find((item) => item.type === 'text');
-  if (textItem === undefined) throw new Error('expected a tool result carrying a full screen');
-  return textItem.text;
-}
-
 /** Characters of text a transcript carries, the text beside a screenshot included; the overflow retry's measure. */
 function textChars(messages: readonly ModelMessage[]): number {
   return messages.reduce((total, message) => {
@@ -75,21 +65,6 @@ function textChars(messages: readonly ModelMessage[]): number {
       return inner + part.output.value.reduce((sum, item) => sum + (item.type === 'text' ? item.text.length : 0), 0);
     }, total);
   }, 0);
-}
-
-/** A full screen whose subtree folds against an earlier revision. */
-function foldedScreenResult(id: string, revision: string, dependsOn: string, subtree = 'Sidebar'): ModelMessage {
-  return {
-    role: 'tool',
-    content: [
-      {
-        type: 'tool-result',
-        toolCallId: id,
-        toolName: 'tap',
-        output: { type: 'text', value: `Tapped #n3.\n\nThe screen changed substantially since revision b0. Current screen (revision ${revision}, 14 nodes):\n#n1 document\n #n2 navigation "${subtree}" (12 nodes inside, unchanged since revision ${dependsOn})\n #n20 main "Orders"` },
-      },
-    ],
-  };
 }
 
 function changesResult(id: string): ModelMessage {
@@ -176,105 +151,6 @@ describe('compactScreenHistory', () => {
       ],
     });
     expect(compacted[2]).toEqual(messages[2]);
-  });
-
-  it('keeps a full screen a surviving folded screen depends on', () => {
-    const messages = [
-      opening,
-      changesResult('c1'),
-      fullScreenResult('c2', 'b2'),
-      foldedScreenResult('c4', 'b4', 'b0'),
-    ];
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    expect(compacted).not.toBe(messages);
-    // The opening screen is the only place the folded sidebar is listed in
-    // full, so it stays verbatim; the middle screen, which nothing names,
-    // is elided.
-    expect(compacted[0]).toEqual(messages[0]);
-    expect(compacted[1]).toEqual(messages[1]);
-    expect(toolOutput(compacted[2]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(compacted[3]).toEqual(messages[3]);
-  });
-
-  it('keeps a depended-on screen that arrived as a plain-text tool result', () => {
-    const messages = [
-      opening,
-      fullScreenResult('c1', 'b1'),
-      fullScreenResult('c2', 'b2'),
-      fullScreenResult('c3', 'b2a'),
-      foldedScreenResult('c4', 'b3', 'b2'),
-    ];
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    expect(compacted).not.toBe(messages);
-    // The sidebar was last listed in full by the b2 text result, so b3's
-    // fold names b2 and that result stays verbatim. The screen after b2
-    // keeps the rewrite budget alive past it, so the keep-check on the text
-    // result is actually exercised: without it, b2 would be elided and b2a
-    // would survive instead.
-    expect(compacted[0]!.content).toContain('[earlier screen elided');
-    expect(toolOutput(compacted[1]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(compacted[2]).toBe(messages[2]);
-    expect(toolOutput(compacted[3]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(compacted[4]).toBe(messages[4]);
-  });
-
-  it('elides a screen no surviving fold depends on, even when it is the oldest', () => {
-    const messages = [
-      opening,
-      changesResult('c1'),
-      fullScreenResult('c2', 'b2'),
-      foldedScreenResult('c4', 'b4', 'b2'),
-    ];
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    expect(compacted).not.toBe(messages);
-    expect(compacted[0]!.content).toContain('[earlier screen elided');
-    expect(compacted[2]).toEqual(messages[2]);
-    expect(compacted[3]).toEqual(messages[3]);
-  });
-
-  it('keeps a dependency screen transitively, through a screen that itself folded', () => {
-    const messages = [
-      opening,
-      fullScreenResult('c1', 'bx'),
-      foldedScreenResult('c2', 'b1', 'b0', 'Footer'),
-      foldedScreenResult('c3', 'b2', 'b1'),
-    ];
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    expect(compacted).not.toBe(messages);
-    // The newest screen names b1, and b1 names b0: both stay, so every fold
-    // line still points at a screen the model holds. Only the screen no
-    // fold names is elided.
-    expect(compacted[0]).toEqual(messages[0]);
-    expect(toolOutput(compacted[1]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(compacted[2]).toEqual(messages[2]);
-    expect(compacted[3]).toEqual(messages[3]);
-  });
-
-  it('leaves a screenshot result whose screens are all kept untouched, without spending the elision budget', () => {
-    const messages = [
-      pixelScreenResult('c1', 'b1'),
-      fullScreenResult('c2', 'b2'),
-      fullScreenResult('c3', 'b3'),
-      foldedScreenResult('c4', 'b4', 'b1'),
-    ];
-    // Only b2 and b3 may be elided: b1 stays as the fold dependency of b4,
-    // and b4 stays as the newest screen. A budget that exactly covers the
-    // elidable screens leaves the transcript alone only when the kept
-    // screens spend none of it; counting b1 and b4 would push the total
-    // over budget and elide b2 and b3.
-    const elidableBytes = [messages[1]!, messages[2]!].reduce(
-      (bytes, message) => bytes + Buffer.byteLength(screenText(message), 'utf8'),
-      0,
-    );
-    expect(compactScreenHistory(messages, { keepStaleBytes: elidableBytes })).toBe(messages);
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    expect(compacted).not.toBe(messages);
-    // The opening screenshot result carries only the kept b1 screen, so it
-    // is returned untouched while the elidable screens go.
-    expect(compacted[0]).toBe(messages[0]);
-    expect(toolOutput(compacted[1]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(toolOutput(compacted[2]!)).toMatchObject({ type: 'text', value: expect.stringContaining('[earlier screen elided') });
-    expect(compacted[3]).toBe(messages[3]);
   });
 
   it('shrinks a pixel-mode history on the budget-free pass the overflow retry runs after the cache-friendly pass kept it', () => {

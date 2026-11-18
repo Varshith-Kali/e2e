@@ -49,6 +49,17 @@ const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** How long the attempt outlives its step, so a step that hit the TTL is still closed in order. */
 const CLOSE_GRACE_MS = 60 * 1000;
 const SESSION_INSTRUCTION = 'Interactive session: a coding agent drives the app over MCP.';
+
+/**
+ * The session's screen presenter, with folding on: the session is the one
+ * caller that turns it on, since its `observe` returns the whole tree, so a
+ * folded subtree stays readable, and its transcript is never compacted, so
+ * the screen a fold names is never elided.
+ */
+export function createSessionScreenPresenter(): ScreenPresenter {
+  return new ScreenPresenter({ foldUnchangedSubtrees: true });
+}
+
 /** Where an agent reads how to write a test, said in the server's instructions and every session's opening. */
 export const READ_WRITING_GUIDE = 'Before you write or edit a test, read the writing-tests guide: the resource e2e://guide/writing-tests, or npx e2e guide writing-tests in a shell.';
 
@@ -450,11 +461,7 @@ export class SessionHost {
         ...(params === undefined ? {} : { params }),
         timeout: ttlMs,
       });
-      // The session's presenter folds large unchanged subtrees: MCP is the
-      // one caller that turns folding on, since its observe returns the whole
-      // tree, so a folded subtree stays readable, and its transcript is never
-      // compacted, so the screen a fold names is never elided.
-      const screen = new ScreenPresenter({ foldUnchangedSubtrees: true });
+      const screen = createSessionScreenPresenter();
       const recorder = this.recorder(id, config, attempt);
       const catalog = createSessionCatalog({
         context: step.context,

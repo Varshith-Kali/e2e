@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelMessage, ToolResultPart } from 'ai';
 import type { ExecutorObservation } from '@e2e-dev/core/lib/agent/executor';
-import { FOLD_DEPENDENCY_PATTERN, reportsNoEffect, reportsScreenChange, ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
+import { reportsNoEffect, reportsScreenChange, ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { compactScreenHistory } from '@e2e-dev/core/lib/agent/transcript-compaction';
 
 function screen(revision: string, lines: readonly string[], extra: Partial<ExecutorObservation> = {}): ExecutorObservation {
@@ -614,19 +614,6 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     expect(b4).toContain(' #n14 link "Item 12"');
   });
 
-  it('lists the subtree in full again after the fold records are cleared', () => {
-    const presenter = foldingPresenter();
-    presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
-    const folded = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
-    expect(folded).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
-    presenter.clearFoldRecords();
-    const text = presenter.update(screen('b3', orderScreen(MAIN_SEARCH, 12)), { lead: 'Tapped #n43.' });
-    expect(text).toContain('The screen changed substantially since revision b2.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
-    expect(text).toContain(' #n3 link "Item 1"');
-    expect(text).toContain(' #n14 link "Item 12"');
-  });
-
   it('drops the fold record when a subtree leaves the screen, so a re-added subtree is listed in full', () => {
     const presenter = foldingPresenter();
     const extras = [
@@ -652,14 +639,6 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     expect(text).toContain('The screen changed substantially since revision b3.');
     expect(text).not.toContain('nodes inside, unchanged since revision');
     expect(text).toContain(' #n3 link "Item 1"');
-  });
-
-  it('exports a fold dependency pattern a repeated .test() can reuse', () => {
-    const line = ' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)';
-    expect(FOLD_DEPENDENCY_PATTERN.test(line)).toBe(true);
-    expect(FOLD_DEPENDENCY_PATTERN.test(line)).toBe(true);
-    expect(FOLD_DEPENDENCY_PATTERN.exec(line)?.[1]).toBe('b1');
-    expect(FOLD_DEPENDENCY_PATTERN.exec(line)?.[1]).toBe('b1');
   });
 
   it('never folds a top-level root, even one holding enough unchanged nodes', () => {

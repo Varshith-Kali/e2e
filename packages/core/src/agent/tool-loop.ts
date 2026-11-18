@@ -28,7 +28,7 @@ import {
 } from './model/tool-choice.ts';
 import { withStallGuard } from './model/stall.ts';
 import { providerHints, type ProviderHints, type ProviderModelRef } from './model/provider-hints.ts';
-import { bindPresenter, clearFoldRecordsFor, isScreenOutput, reportsNoEffect, toolResultTexts, unbindPresenter } from './screen-update.ts';
+import { isScreenOutput, reportsNoEffect, toolResultTexts } from './screen-update.ts';
 import { shapeOf } from './message-shape.ts';
 import { compactScreenHistory } from './transcript-compaction.ts';
 import { AgentError, isAgentError } from './error.ts';
@@ -351,20 +351,6 @@ class LoopRun {
   }
 
   async run(): Promise<StepVerdict> {
-    // A fresh presenter per run, removed after it: the transcript belongs to
-    // this loop, not the step context. Removed by identity, so a run that ends
-    // while another run on this context is still going leaves that run's
-    // presenter in place and never puts back one whose run is over.
-    const presenter = bindPresenter(this.context);
-    try {
-      return await this.runLoop();
-    } finally {
-      unbindPresenter(this.context, presenter);
-    }
-  }
-
-  /** The loop itself: tools, opening prompt, and model turns until a verdict. */
-  private async runLoop(): Promise<StepVerdict> {
     const helpers = this.helpers();
     this.executorTools = this.options.tools(this.context, helpers);
     const tools: ToolSet = {
@@ -709,10 +695,6 @@ class LoopRun {
     }
     this.overflowNote = ' again after the history was shrunk once';
     this.turnOffset = this.turnsUsed;
-    // The retry may have cut the screens this run's folds name, so the next screen renders in full. The clear
-    // covers every presenter that rendered for this step context: the run's own and the presenters its tools
-    // render through, including a toolset built before the run.
-    clearFoldRecordsFor(this.context);
     this.note(`context overflow before turn ${String(this.turnsUsed + 1)}: history shrunk from ${String(before)} to ${String(after)} chars, retrying once`);
     return shrunk;
   }

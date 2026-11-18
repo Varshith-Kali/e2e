@@ -26,7 +26,7 @@ import { markWaitingTool } from './loop-guards.ts';
 import { OperationQueue } from './operation-queue.ts';
 import { imagePointToViewport, POINT_VERBS } from './point-tap.ts';
 import { SAMPLE_NAMES, SAMPLE_PREFIX } from './sample-files.ts';
-import { ScreenPresenter, boundPresenter, registerPresenter, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
+import { ScreenPresenter, type ScreenOutput, type ScreenUpdateOptions } from './screen-update.ts';
 
 /** Codes the model may pick when concluding; runtime codes are runtime-assigned. */
 const MODEL_ERROR_CODES = [
@@ -232,9 +232,9 @@ interface GrammarToolSetup extends GrammarToolOptions {
   /**
    * Renders screens for the model and remembers what it has seen, so every
    * result after the first reports the changes rather than the whole tree.
-   * Passed by `e2e mcp` to share with the session; without one, the loop
-   * run's presenter when built inside a loop, else a fresh presenter of its
-   * own.
+   * Shared with the opening prompt by the built-in agent and with the session
+   * by `e2e mcp`; a fresh one per step otherwise, so the first look
+   * (`observe`) returns the whole screen.
    */
   readonly screen?: ScreenPresenter;
   /**
@@ -918,7 +918,7 @@ function createPointTools(
 
 /**
  * What every verb runs through: the loop guard, the
- * loop run's presenter, one queue for the tool bodies (an action and its look
+ * step's presenter, one queue for the tool bodies (an action and its look
  * at the result run together, so a batched turn gets one coherent result
  * per action), and the two moves each verb makes: present the screen after
  * an action, and perform an action then present. A failed action still
@@ -932,13 +932,7 @@ function createPointTools(
  */
 function verbKit(context: StepExecutorContext, options: GrammarToolSetup) {
   const guard = options.guard ?? (<T>(body: () => Promise<T>) => body());
-  // No presenter of its own: the loop run's when built inside one, else a
-  // fresh presenter per toolset, so tools used outside a loop never share
-  // screen state with a run or with each other. Registered for the step
-  // context, so a loop overflow clears its folds even when the toolset was
-  // built before the run.
-  const screen: ScreenPresenter = options.screen ?? boundPresenter(context) ?? new ScreenPresenter();
-  registerPresenter(context, screen);
+  const screen: ScreenPresenter = options.screen ?? new ScreenPresenter();
   const queue = new OperationQueue();
   const inOrder = <T>(body: () => Promise<T>): Promise<T> => queue.run(body);
   /** The screen after an action: the changes since the one the model holds and, once the step shows pixels, a fresh screenshot. */
