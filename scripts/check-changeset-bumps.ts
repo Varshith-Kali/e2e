@@ -8,7 +8,10 @@
  * The previous floor is the one at the package's release tag; on a
  * generated release PR the current version has no tag yet, so the previous
  * released tag is used instead, and the version bump from that tag counts
- * as the announcement when it is a `0.x` minor or a major.
+ * as the announcement when it is a `0.x` minor or a major. A sibling major
+ * counts too: on a release PR the sibling's major moves every peer to
+ * `>=<major>.0.0 <major+1>`, and each engine gets only a patch bump, so
+ * the sibling's major is the announcement for those floors.
  *
  * Usage: `node scripts/check-changeset-bumps.ts`, part of `pnpm check`. Exits
  * 1 listing every offending changeset.
@@ -99,7 +102,10 @@ for (const { path, manifest } of packages) {
       released: releasedVersions(changelog),
       changes: changesByPackage.get(manifest.name) ?? [],
       alreadyFlagged: flagged.has(manifest.name),
-      announcedByVersionBump: fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version),
+      announcedByVersionBump:
+        (fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version)) ||
+        // A sibling major moves every peer to `>=<major>.0.0 <major+1>` (restore-peer-ranges.ts); the sibling's major is the announcement.
+        (sibling.manifest.version === currentFloor && currentFloor.split('.')[0] !== previousFloor.split('.')[0]),
     });
   }
 }

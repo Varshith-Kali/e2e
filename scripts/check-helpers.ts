@@ -107,19 +107,72 @@ export interface ReleasePlanPackage {
   };
 }
 
-/** Every named package under `packages/`, private ones included: the release plan needs the whole workspace, since a changeset may name any of them. */
-export function workspacePackages(): ReleasePlanPackage[] {
-  const packages: ReleasePlanPackage[] = [];
-  for (const dir of readdirSync(join(REPO_ROOT, 'packages'))) {
-    const path = join(REPO_ROOT, 'packages', dir, 'package.json');
-    let manifest: Partial<ReleasePlanPackage['packageJson']>;
-    try {
-      manifest = JSON.parse(readFileSync(path, 'utf8')) as Partial<ReleasePlanPackage['packageJson']>;
-    } catch {
+/** The `packages:` globs of `pnpm-workspace.yaml`, in order; empty when the file cannot be read. Only the simple list form is read: one glob per `- ` line. */
+function workspaceGlobs(): string[] {
+  let text: string;
+  try {
+    text = readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8');
+  } catch {
+    return [];
+  }
+  const globs: string[] = [];
+  let inPackages = false;
+  for (const line of text.split('\n')) {
+    if (!inPackages) {
+      if (/^packages:\s*$/.test(line)) inPackages = true;
       continue;
     }
-    if (manifest.name === undefined || manifest.version === undefined) continue;
-    packages.push({ dir: join(REPO_ROOT, 'packages', dir), packageJson: manifest as ReleasePlanPackage['packageJson'] });
+    const item = /^  - ['"]?([^'"\s]+)['"]?\s*(?:#.*)?$/.exec(line);
+    if (item?.[1] !== undefined) {
+      globs.push(item[1]);
+      continue;
+    }
+    if (line.trim() === '' || line.startsWith('#')) continue;
+    break;
+  }
+  return globs;
+}
+
+/** The directories a workspace glob names: `dir/*` expands to its subdirectories, anything else is one directory. */
+function expandWorkspaceGlob(glob: string): string[] {
+  if (glob.endsWith('/*')) {
+    let entries: string[];
+    try {
+      entries = readdirSync(join(REPO_ROOT, glob.slice(0, -2)));
+    } catch {
+      return [];
+    }
+    return entries
+      .map((entry) => join(REPO_ROOT, glob.slice(0, -2), entry))
+      .filter((path) => {
+        try {
+          return statSync(path).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+  }
+  return [join(REPO_ROOT, glob)];
+}
+
+/** Every named package in the workspace, private ones included: the release plan needs the whole workspace, since a changeset may name any of them. The directories come from the `packages:` globs in `pnpm-workspace.yaml`, not just `packages/*`: the private apps live under `apps/*`, and a changeset naming one of them must not crash the plan. */
+export function workspacePackages(): ReleasePlanPackage[] {
+  const packages: ReleasePlanPackage[] = [];
+  const seen = new Set<string>();
+  for (const glob of workspaceGlobs()) {
+    for (const dir of expandWorkspaceGlob(glob)) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
+      const path = join(dir, 'package.json');
+      let manifest: Partial<ReleasePlanPackage['packageJson']>;
+      try {
+        manifest = JSON.parse(readFileSync(path, 'utf8')) as Partial<ReleasePlanPackage['packageJson']>;
+      } catch {
+        continue;
+      }
+      if (manifest.name === undefined || manifest.version === undefined) continue;
+      packages.push({ dir, packageJson: manifest as ReleasePlanPackage['packageJson'] });
+    }
   }
   return packages;
 }
@@ -152,28 +205,41 @@ export async function nextReleaseVersions(
     packages: packages.map((pkg) => ({ dir: pkg.dir, packageJson: pkg.packageJson })),
     tool: { type: 'pnpm' },
   } as Parameters<typeof assembleReleasePlan>[1];
-  let read: Awaited<ReturnType<typeof readConfig>>;
+  // changesets prints a line to stderr per dependent whose peer does not
+  // name the sibling's current version yet, from both `readConfig` and
+  // `assembleReleasePlan`; on a passing run those lines read as failures
+  // in the check log, so they stay inside this call. A real failure still
+  // throws, or comes back in the `errors` array, so silencing the log
+  // hides no error.
+  const originalError = console.error;
+  console.error = () => {};
+  let plan: ReturnType<typeof assembleReleasePlan>;
   try {
-    read = await readConfig(cwd, planPackages);
-  } catch (error) {
-    // A malformed config throws out of readConfig instead of returning
-    // errors, so catch it here and report it as a config failure.
-    throw new Error(`cannot read .changeset/config.json: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    let read: Awaited<ReturnType<typeof readConfig>>;
+    try {
+      read = await readConfig(cwd, planPackages);
+    } catch (error) {
+      // A malformed config throws out of readConfig instead of returning
+      // errors, so catch it here and report it as a config failure.
+      throw new Error(`cannot read .changeset/config.json: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    const { config, errors } = read;
+    if (config === undefined || errors !== undefined) {
+      throw new Error(`cannot read .changeset/config.json: ${(errors ?? ['unknown error']).join('; ')}`);
+    }
+    plan = assembleReleasePlan(
+      changesets.map(({ file, changeset }) => ({
+        id: file.replace(/\.md$/, ''),
+        summary: changeset.summary,
+        releases: changeset.releases,
+      })),
+      planPackages,
+      config,
+      undefined,
+    );
+  } finally {
+    console.error = originalError;
   }
-  const { config, errors } = read;
-  if (config === undefined || errors !== undefined) {
-    throw new Error(`cannot read .changeset/config.json: ${(errors ?? ['unknown error']).join('; ')}`);
-  }
-  const plan = assembleReleasePlan(
-    changesets.map(({ file, changeset }) => ({
-      id: file.replace(/\.md$/, ''),
-      summary: changeset.summary,
-      releases: changeset.releases,
-    })),
-    planPackages,
-    config,
-    undefined,
-  );
   const versions = new Map<string, string>();
   for (const release of plan.releases) {
     if (release.type !== 'none' && release.newVersion !== undefined) versions.set(release.name, release.newVersion);

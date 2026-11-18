@@ -46,6 +46,16 @@ describe('workspacePackages', () => {
       assert.equal(byName.get(manifest.name), manifest.version);
     }
   });
+
+  it('reads the private apps too: a changeset may name any of them', () => {
+    const packages = workspacePackages();
+    const byName = new Map(packages.map((pkg) => [pkg.packageJson.name, pkg.packageJson.version]));
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'apps', 'testbed', 'package.json'), 'utf8')) as {
+      name: string;
+      version: string;
+    };
+    assert.equal(byName.get(manifest.name), manifest.version);
+  });
 });
 
 describe('nextReleaseVersions', () => {
@@ -87,6 +97,24 @@ describe('nextReleaseVersions', () => {
     assert.equal(versions.get('@e2e-dev/web'), '0.16.1');
     assert.equal(versions.has('e2e'), false);
     assert.equal(versions.has('@e2e-dev/core'), false);
+  });
+
+  it('keeps the changesets out-of-range warnings off stderr', async () => {
+    // The plan prints a line per dependent whose peer does not name the
+    // sibling's current version yet; on a passing run those lines read
+    // as failures in the check log, so they stay inside this call.
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    try {
+      const versions = await nextReleaseVersions([e2e, core, web], [changeset('web-patch.md', '"@e2e-dev/web": patch')]);
+      assert.equal(versions.get('@e2e-dev/web'), '0.16.1');
+    } finally {
+      console.error = originalError;
+    }
+    assert.deepEqual(errors, []);
   });
 
   it('throws when the changesets config is malformed instead of reading it as no fixed groups', async () => {

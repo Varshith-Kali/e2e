@@ -121,7 +121,7 @@ export interface FloorRaiseInput {
   readonly released: ReadonlySet<string>;
   readonly changes: readonly { type: BumpType; summary: string }[];
   readonly alreadyFlagged: boolean;
-  /** The release carrying this floor change already bumped the package by a `0.x` minor or a major, so its consumed changesets announced the raise. */
+  /** The release carrying this floor change already bumped the package by a `0.x` minor or a major, or the sibling by a major, so its consumed changesets announced the raise. */
   readonly announcedByVersionBump: boolean;
 }
 
@@ -145,10 +145,15 @@ export function floorRaiseProblems(inputs: readonly FloorRaiseInput[]): string[]
       (top, change) => (top === undefined || BUMP_RANK[change.type] > BUMP_RANK[top] ? change.type : top),
       undefined,
     );
+    // A `**Release:**` minor is already a minor: only its summary prefix
+    // is wrong, so the hint names the prefix, not the bump.
+    const releaseMinor = input.changes.some((change) => change.type === 'minor' && change.summary.startsWith(RELEASE));
     const fix =
       highest === undefined
         ? `with no changeset for ${input.name}; add a minor changeset whose summary opens ${BREAKING}`
-        : `with only a ${highest} bump; make it a minor whose summary opens ${BREAKING}`;
+        : releaseMinor
+          ? `with only a minor changeset whose summary opens ${RELEASE}; change the summary to open ${BREAKING} instead`
+          : `with only a ${highest} bump; make it a minor whose summary opens ${BREAKING}`;
     problems.push(
       `${input.path}: ${input.peer} peer floor rises ${input.previousFloor} -> ${input.currentFloor}, past a runner minor the previous range accepted, ${fix}`,
     );

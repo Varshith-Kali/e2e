@@ -130,7 +130,7 @@ describe('floorRaiseProblems', () => {
   it('fails a floor raise carried only by a **Release:** minor', () => {
     const problems = floorRaiseProblems([input([{ type: 'minor', summary: '**Release:** the runner API.' }])]);
     assert.equal(problems.length, 1);
-    assert.match(problems[0]!, /make it a minor whose summary opens \*\*Breaking:\*\*/);
+    assert.match(problems[0]!, /with only a minor changeset whose summary opens \*\*Release:\*\*; change the summary to open \*\*Breaking:\*\* instead/);
   });
 
   it('passes a correction from a never-published floor on a patch bump', () => {
