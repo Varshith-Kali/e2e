@@ -356,6 +356,9 @@ describe('ScreenPresenter', () => {
 });
 
 describe('ScreenPresenter folds large unchanged subtrees in the full-screen fallback', () => {
+  /** A presenter with folding on, as the MCP session builds one; the default presenter never folds. */
+  const foldingPresenter = (): ScreenPresenter => new ScreenPresenter({ foldUnchangedSubtrees: true });
+
   /** A sidebar of `count` links under a navigation node, ids #n3 and up. */
   function sidebar(count: number): string[] {
     return [
@@ -400,7 +403,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   }
 
   it('folds a large unchanged sidebar, and lists the changed main in full', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12), { path: '/orders' }), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
@@ -413,7 +416,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('keeps a small unchanged subtree listed in full', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 3)));
     const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 3)), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
@@ -423,7 +426,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('folds an unchanged group inside a changed sidebar, and lists the changed sibling', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     const before = [
       '#n1 document "Orders"',
       ' #n2 navigation "Sidebar"',
@@ -444,7 +447,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('does not fold a subtree that lost a node, even when the rest is unchanged', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const after = orderScreen(MAIN_DETAILS, 12).filter((line) => !line.includes('#n5 '));
     const text = presenter.update(screen('b2', after), { lead: 'Tapped #n22.' });
@@ -454,7 +457,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('does not fold a subtree holding the focused node', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const after = orderScreen(MAIN_DETAILS, 12).map((line) =>
       (line.includes('#n8 ') ? '  #n8 link "Item 6" [focused]' : line),
@@ -466,7 +469,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('does not fold on a truncated listing, whose cut nodes are unknown', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     // Twelve more added nodes, so the change still trips the whole-screen fallback
     // even though a truncated listing reports no removals.
@@ -479,7 +482,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('does not let a fold swallow lines past a marker line inside the subtree', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     // A marker line with no node id sits inside the sidebar, between its
     // eleventh and twelfth links: it closes the sidebar's span there.
     const sidebarWithMarker = [
@@ -503,7 +506,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('sends the first screen whole, with no folding', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     const text = presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     expect(text).toContain('Current screen (revision b1, 18 nodes):');
     expect(text).not.toContain('nodes inside, unchanged since revision');
@@ -512,7 +515,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('names the revision that last listed the subtree in full, not an intervening diff', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     // The sidebar is not listed at b2: the diff names only the changed heading.
     const changed = orderScreen(MAIN_LIST, 12).map((line) =>
@@ -528,7 +531,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('names the original revision when the previous screen itself folded the subtree', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const first = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(first).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
@@ -539,7 +542,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('lists a changed subtree in full again, then folds it against that listing', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const renamed = orderScreen(MAIN_LIST, 12).map((line) =>
       (line.includes('#n5 ') ? '  #n5 link "Item 3 (new)"' : line),
@@ -559,7 +562,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('still folds against the original revision when a change was undone', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const renamed = orderScreen(MAIN_LIST, 12).map((line) =>
       (line.includes('#n5 ') ? '  #n5 link "Item 3 (new)"' : line),
@@ -571,7 +574,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('folds against the original listing when an intervening change was undone, even though the previous screen differs', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const renamed = orderScreen(MAIN_LIST, 12).map((line) =>
       (line.includes('#n5 ') ? '  #n5 link "Item 3 (new)"' : line),
@@ -586,7 +589,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('a truncated full screen clears the fold record, so the next fallback lists the subtree in full instead of naming an elided screen', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     const b1 = presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const b2 = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(b2).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
@@ -612,7 +615,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('lists the subtree in full again after the fold records are cleared', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const folded = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(folded).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
@@ -625,7 +628,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('drops the fold record when a subtree leaves the screen, so a re-added subtree is listed in full', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     const extras = [
       ' #n50 group "Extras"',
       ...Array.from({ length: 24 }, (_, i) => `  #n${String(60 + i)} button "Extra ${String(i + 1)}"`),
@@ -660,7 +663,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
   });
 
   it('never folds a top-level root, even one holding enough unchanged nodes', () => {
-    const presenter = new ScreenPresenter();
+    const presenter = foldingPresenter();
     // A second top-level root with its leaves directly under it: the root
     // itself is the only node that could fold, and its indent is 0.
     const second = [
@@ -685,6 +688,41 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     expect(text).not.toContain('nodes inside, unchanged since revision');
     expect(text).toContain('#n50 document "Second"');
     expect(text).toContain(' #n60 link "Second 1"');
+  });
+
+  it('lists a large unchanged subtree in full when folding is off, the default', () => {
+    // Only the MCP session turns folding on; every other presenter lists
+    // its full screens whole, so the same fixture that folds above stays flat here.
+    const presenter = new ScreenPresenter();
+    presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
+    const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12), { path: '/orders' }), { lead: 'Tapped #n22.' });
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).toContain(' #n3 link "Item 1"');
+    expect(text).toContain(' #n14 link "Item 12"');
+  });
+
+  it('does not fold a subtree whose node moved to a different parent', () => {
+    const presenter = foldingPresenter();
+    // A form whose group holds twelve fields, beside a main that changes wholesale.
+    const fields = (indent: string): string[] =>
+      Array.from({ length: 12 }, (_, i) => `${indent}#n${String(12 + i)} textbox "Field ${String(i + 1)}"`);
+    const main = (label: string): string[] => [
+      ' #n30 main "Content"',
+      ...Array.from({ length: 40 }, (_, i) => `  #n${String(40 + i)} button "Row ${String(i + 1)} ${label}"`),
+    ];
+    const before = ['#n1 document "Checkout"', ...main(''), ' #n10 form "Checkout"', '  #n11 group "Shipping"', ...fields('   ')];
+    presenter.initial(screen('b1', before));
+    // The last field moves out of the group into the form, right after the
+    // group: its line keeps its place in the listing, only its depth changes,
+    // so a digest that strips every level of indentation still reads the form
+    // as unchanged and would fold it, hiding the move.
+    const after = ['#n1 document "Checkout"', ...main('(new)'), ' #n10 form "Checkout"', '  #n11 group "Shipping"', ...fields('   ').slice(0, 11), '  #n23 textbox "Field 12"'];
+    const text = presenter.update(screen('b2', after), { lead: 'Tapped #n40.' });
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).toContain('  #n23 textbox "Field 12"');
+    expect(text).toContain('  #n11 group "Shipping"');
   });
 });
 

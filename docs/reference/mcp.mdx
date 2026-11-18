@@ -211,7 +211,11 @@ current path and revision. Takes no arguments.
 `select`, `check`, `scroll`, `scroll_to`, `drag`, `upload`, `navigate`,
 `back`, `resize_viewport`, `switch_tab`, `close_tab`, `type_secret`. Each returns the action's summary, the
 [test line](#test_lines) that repeats it or why there is none, and what
-changed on screen.
+changed on screen. When most of the screen changed, the result sends the
+whole new screen instead, with large subtrees that did not change folded to
+one line each, naming how many nodes each holds and the revision that last
+listed it in full; the ids inside a folded subtree stay valid, and `observe`
+returns the whole tree again.
 
 | Input | Does |
 | --- | --- |

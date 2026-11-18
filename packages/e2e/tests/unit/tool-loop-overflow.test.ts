@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
+import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { createBuiltInAgent, projectTools } from '@e2e-dev/core/lib/agent/default-agent';
 import type { StepExecutor, StepExecutorContext } from '@e2e-dev/core/lib/agent/executor';
@@ -77,7 +78,7 @@ const changingBigScreen = (variant: () => number) =>
       ),
   });
 
-/** A dense page whose sidebar sits at the end, as the review's repro: about 900 nodes, the sidebar last, so the overflow clip cuts it off the screen a later fold would name. The rows change per model turn, never per capture: the observation feed re-captures until the screen settles, and a variant that moved on every capture would never settle. */
+/** A dense page whose sidebar sits at the end, as the review's repro: about 900 nodes, the sidebar last, so the overflow clip cuts it off the screen. The rows change per model turn, never per capture: the observation feed re-captures until the screen settles, and a variant that moved on every capture would never settle. */
 const foldingBigScreen = (variant: () => number) =>
   defineEngine({
     name: 'fake',
@@ -103,14 +104,14 @@ const foldingBigScreen = (variant: () => number) =>
     },
   });
 
-/** A dense page with no interactive node, as a canvas-like screen is: the built-in act loop then looks twice, the second time asking for pixels, so the two opening renders of overlapping runs interleave. The rows change per variant; the sidebar is plain text, so it can fold. */
+/** A dense page with no interactive node, as a canvas-like screen is: the built-in act loop then looks twice, the second time asking for pixels, so the two opening renders of overlapping runs interleave. */
 /** A dense page for the overlapping-opening-prompts test. The first look
  * returns a sidebar of plain text, so the act loop's opening look finds no
  * interactive node and looks a second time asking for pixels; every later
  * look returns the sidebar as links. The first run therefore renders its
  * opening after the second run's, which is what lets a presenter read after
- * the first await overwrite the second run's fold record. The rows change
- * per variant; the sidebar never does, so it can fold. */
+ * the first await overwrite the second run's screen. The rows change per
+ * variant; the sidebar never does. */
 const foldingStillScreen = (variant: () => number) => {
   let calls = 0;
   return defineEngine({
@@ -207,7 +208,7 @@ describe('tool loop context overflow', () => {
     expect(step.metrics?.modelCalls).toBe(3);
   });
 
-  it('lists the next screen in full after the overflow retry cut the screen its folds named', async () => {
+  it('never folds in the built-in agent, and lists the next screen in full after the overflow retry cut the opening screen', async () => {
     let variant = 0;
     const model = installFakeLoopModel(({ turn }) => {
       variant = turn;
@@ -221,18 +222,18 @@ describe('tool loop context overflow', () => {
     await fixtures.agent.act('read the big output');
 
     expect(loopCalls).toHaveLength(4);
-    // The second look folded the sidebar against the opening screen. The
-    // revision it names is whatever the settling captures minted, so the
-    // test reads it off the fold line instead of assuming b1.
-    const folded = loopCalls[1]!.lastToolResult;
-    const dependency = /\(\d+ nodes inside, unchanged since revision (b\d+)\)/.exec(folded)?.[1];
-    expect(dependency).toMatch(/^b\d+$/);
-    // The retry cut the opening screen's tail, sidebar included, and the
-    // second screen's fold line with it.
-    expect(loopCalls[2]!.prompt).toContain("more characters cut: the request exceeded the model's context window");
+    // Only the MCP session folds: the second look lists the sidebar in full,
+    // with no fold line naming the opening screen.
+    const second = loopCalls[1]!.lastToolResult;
+    expect(second).toMatch(/Current screen \(revision b\d+/);
+    expect(second).toContain('#n901 link "Item 1"');
+    expect(second).not.toContain('unchanged since revision');
+    // The retry elided the opening screen, since no fold line depends on it
+    // anymore, and cut the newest result's tail, sidebar included.
+    expect(loopCalls[2]!.prompt).toContain('[earlier screen elided');
     expect(loopCalls[2]!.prompt).not.toContain('link "Item 1"');
-    // The next look lists the sidebar in full instead of folding against a
-    // screen the model no longer holds whole.
+    expect(loopCalls[2]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");
+    // The next look lists the sidebar in full again.
     const next = loopCalls[3]!.lastToolResult;
     expect(next).toMatch(/Current screen \(revision b\d+/);
     expect(next).toContain('#n901 link "Item 1"');
@@ -242,7 +243,7 @@ describe('tool loop context overflow', () => {
     expect(step.metrics?.modelCalls).toBe(3);
   });
 
-  it('lists the next screen in full after the overflow retry cut the screen its folds named, for a custom loop built from createGrammarTools', async () => {
+  it('lists the next screen in full after the overflow retry cut the first screen, for a custom loop built from createGrammarTools', async () => {
     let variant = 0;
     const model = installFakeLoopModel(({ turn }) => {
       variant = turn;
@@ -252,8 +253,8 @@ describe('tool loop context overflow', () => {
       return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
     });
     // The documented custom brain: the loop chassis plus the grammar tools,
-    // with no presenter of its own. Its first observe lists the sidebar in
-    // full, so the second look must not fold against the cut screen.
+    // with no presenter of its own. The loop never folds, so the first observe
+    // lists the sidebar in full and the next look lists it in full again.
     const executor = createToolLoopExecutor({
       name: 'custom-loop',
       tools: (context) => createGrammarTools(context),
@@ -274,8 +275,7 @@ describe('tool loop context overflow', () => {
     // the retried request carries.
     expect(loopCalls[2]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");
     expect(loopCalls[2]!.lastToolResult).not.toContain('link "Item 1"');
-    // The next look lists the sidebar in full instead of folding against a
-    // screen the model no longer holds whole.
+    // The next look lists the sidebar in full again.
     const next = loopCalls[3]!.lastToolResult;
     expect(next).toMatch(/Current screen \(revision b\d+/);
     expect(next).toContain('#n901 link "Item 1"');
@@ -298,11 +298,13 @@ describe('tool loop context overflow', () => {
     // The review's repro: the custom executor builds the grammar tools from
     // the step context before the loop run starts and hands the same set to
     // the loop, so the tools keep a presenter of their own and the loop's
-    // overflow retry must clear its folds too.
+    // overflow retry must clear its folds too. The tools render through a
+    // presenter that opted into folding: only the MCP session does that in
+    // production, and the shrink must clear its folds all the same.
     const executor: StepExecutor = {
       name: 'prebuilt-tools-loop',
       runStep: async (context) => {
-        const tools = createGrammarTools(context);
+        const tools = createGrammarTools(context, { screen: new ScreenPresenter({ foldUnchangedSubtrees: true }) });
         const loop = createToolLoopExecutor({
           name: 'custom-loop',
           tools: () => tools,
@@ -707,10 +709,10 @@ describe('built-in agent opening prompts', () => {
       // sidebar of plain text, so the act run's opening look finds no
       // interactive node and looks a second time, after L has opened: if
       // E read its presenter after its first look instead of before it,
-      // E's opening renders through L's presenter and overwrites L's fold
-      // record with E's revision. The screen then changes and L observes
-      // it again; that look folds the sidebar against the revision L's
-      // opening prompt showed, the one L's model holds.
+      // E's opening renders through L's presenter and overwrites L's screen
+      // with E's. The screen then changes and L observes it again; that look
+      // goes out whole, and its lead names the revision L's opening prompt
+      // showed, the one L's model holds, or E's revision if E overwrote it.
       const model = installFakeLoopModel((call) => {
         if (call.system.includes('Loop E')) {
           if (call.lastToolResult === '') seenFirst.add('E');
@@ -723,7 +725,7 @@ describe('built-in agent opening prompts', () => {
           if (seenFirst.has('E') && seenFirst.has('L')) resolveBothOpened?.();
           return [{ toolName: 'observe', input: {} }];
         }
-        if (variant === 1 && call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('unchanged since revision')) {
+        if (variant === 1 && call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('changed substantially since revision')) {
           return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
         }
         if (lTurns > 50) return [{ toolName: 'complete_step', input: { status: 'passed', summary: 'read the sidebar' } }];
@@ -769,18 +771,18 @@ describe('built-in agent opening prompts', () => {
       expect(eRevision).not.toBe(lRevision);
       if (kind === 'act') {
         // The first run's opening look came after the second run's: its
-        // render could overwrite the second run's fold record. If this
+        // render could overwrite the second run's presenter. If this
         // ever fails, the interleaving the test relies on has changed.
         expect(Number(eRevision!.slice(1))).toBeGreaterThan(Number(lRevision!.slice(1)));
       }
-      // The look after the screen changed folds the sidebar against the
-      // revision L's opening prompt showed, the one L's model holds.
-      const folded = lCalls.find(
-        (call) => call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('unchanged since revision'),
+      // The look after the screen changed goes out whole, and its lead names
+      // the revision L's opening prompt showed, the one L's model holds.
+      const changed = lCalls.find(
+        (call) => call.lastToolResult.includes('v1 row') && call.lastToolResult.includes('changed substantially since revision'),
       );
-      expect(folded).toBeDefined();
-      const foldRevision = /unchanged since revision (b\d+)/.exec(folded!.lastToolResult)?.[1];
-      expect(foldRevision).toBe(lRevision);
+      expect(changed).toBeDefined();
+      const sinceRevision = /changed substantially since revision (b\d+)/.exec(changed!.lastToolResult)?.[1];
+      expect(sinceRevision).toBe(lRevision);
       const step = steps.all()[0]!;
       expect(step.status).toBe('passed');
     },

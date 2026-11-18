@@ -450,7 +450,11 @@ export class SessionHost {
         ...(params === undefined ? {} : { params }),
         timeout: ttlMs,
       });
-      const screen = new ScreenPresenter();
+      // The session's presenter folds large unchanged subtrees: MCP is the
+      // one caller that turns folding on, since its observe returns the whole
+      // tree, so a folded subtree stays readable, and its transcript is never
+      // compacted, so the screen a fold names is never elided.
+      const screen = new ScreenPresenter({ foldUnchangedSubtrees: true });
       const recorder = this.recorder(id, config, attempt);
       const catalog = createSessionCatalog({
         context: step.context,
@@ -609,7 +613,7 @@ export class SessionHost {
     );
     lines.push(`Tools (run one with call {tool, args}; tools {tool} shows a tool's arguments):`, ...this.catalogLines(live));
     lines.push(
-      'Node ids ("n42") are valid only for the newest observation; every action reports what changed on screen and the test line that repeats it (test_lines returns them all), and observe shows the whole screen. Call close_session when you are done.',
+      'Node ids ("n42") are valid only for the newest observation; every action reports what changed on screen and the test line that repeats it (test_lines returns them all), and observe shows the whole screen. When most of the screen changed, an action result sends the whole screen instead, with large subtrees that did not change folded to one line each, naming how many nodes each holds and the revision that last listed it in full; the ids inside a folded subtree stay valid, and observe shows the whole tree again. Call close_session when you are done.',
       READ_WRITING_GUIDE,
     );
     return `${lines.join('\n')}\n\n${screen}`;

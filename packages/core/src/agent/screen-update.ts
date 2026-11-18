@@ -6,13 +6,16 @@
  * the lines that appeared, the lines that changed, the lines that went away.
  * Node ids are stable for as long as an element exists, so a line the model
  * saw earlier still names the same element, and a diff is a complete update
- * rather than a hint. A screen that changed mostly goes out whole again,
- * with large subtrees the model already holds folded to one line each,
- * naming the revision that last listed them in full, so a persistent sidebar
- * is not repeated on every page transition. A fold line never names a
- * revision that only reported the subtree as a diff, or that itself folded
- * it: the presenter remembers, per subtree, the revision that last listed
- * it whole and what it read then.
+ * rather than a hint. A screen that changed mostly goes out whole again. In
+ * an MCP session the presenter folds large subtrees the model already holds
+ * to one line each, naming the revision that last listed them in full, so a
+ * persistent sidebar is not repeated on every page transition: only MCP
+ * turns folding on, since it is the one caller with a whole-tree `observe`
+ * to read a folded subtree back and no transcript compaction to elide the
+ * screen a fold names. A fold line never names a revision that only
+ * reported the subtree as a diff, or that itself folded it: the presenter
+ * remembers, per subtree, the revision that last listed it whole and what
+ * it read then.
  *
  * A screen may carry its pixels too. The presenter is where a screenshot
  * joins the text: it notes the image's size and coordinate space under the
@@ -162,6 +165,18 @@ export function reportsScreenChange(text: string): boolean {
   return headline.startsWith(CHANGES_SINCE) && !headline.endsWith(`): ${NOTHING_LISTED_CHANGED}. ${TRUNCATED_ASSURANCE}`);
 }
 
+/**
+ * What a screen presenter is built with. Folding large unchanged subtrees
+ * is off unless a caller turns it on: only the MCP session does, since it is
+ * the one caller whose `observe` returns the whole tree, so a folded subtree
+ * stays readable, and whose transcript is never compacted, so the screen a
+ * fold names is never elided. Every other loop lists its full screens whole.
+ */
+export interface ScreenPresenterOptions {
+  /** Fold large unchanged subtrees in full-screen renders; off by default. */
+  readonly foldUnchangedSubtrees?: boolean | undefined;
+}
+
 /** Renders one step's screens for the model and remembers what it has seen. */
 export class ScreenPresenter {
   private shown: ShownScreen | undefined;
@@ -177,6 +192,12 @@ export class ScreenPresenter {
   private seen: { readonly tabs: ExecutorObservation['tabs']; readonly path: string | undefined } | undefined;
   /** The revision that last listed each subtree in full, by its root node id, and what it read then. */
   private fullyShown = new Map<string, FullyShownSubtree>();
+  /** Whether full-screen renders fold large unchanged subtrees; off unless the caller turned it on. */
+  private readonly foldUnchangedSubtrees: boolean;
+
+  constructor(options: ScreenPresenterOptions = {}) {
+    this.foldUnchangedSubtrees = options.foldUnchangedSubtrees === true;
+  }
 
   /** True once a screenshot went to the model in this step. */
   get showingPixels(): boolean {
@@ -218,7 +239,7 @@ export class ScreenPresenter {
    * nothing: nodes past the cut were never shown.
    */
   private renderWhole(observation: ExecutorObservation): string {
-    const rendered = renderFull(observation);
+    const rendered = renderFull(observation, undefined, this.foldUnchangedSubtrees);
     this.noteListed(rendered.listed, rendered.folded);
     return rendered.text;
   }
@@ -312,7 +333,7 @@ export class ScreenPresenter {
       return `${lead}${renderUnchanged(previous.revision, observation, expectChange, pixels)}${closed}`;
     }
     if (changes >= MAX_DIFF_LINES || changes > MAX_DIFF_SHARE * next.order.length) {
-      const rendered = renderFull(observation, this.fullyShown);
+      const rendered = renderFull(observation, this.fullyShown, this.foldUnchangedSubtrees);
       this.noteListed(rendered.listed, rendered.folded);
       return `${lead}${CHANGED_SUBSTANTIALLY}${previous.revision}. ${rendered.text}${closed}`;
     }
@@ -516,14 +537,17 @@ interface RenderedFullScreen {
 }
 
 /** One full screen, headed so the elision can find it later. A screen that
- * follows one the model holds folds its large unchanged subtrees: the root
- * line stays, with the count of the nodes inside and the revision that last
- * listed them in full, and the nodes inside are left out. The first screen of a
- * step has nothing to fold against, and a truncated listing never folds,
+ * follows one the model holds folds its large unchanged subtrees when the
+ * presenter folds: the root line stays, with the count of the nodes inside
+ * and the revision that last listed them in full, and the nodes inside are
+ * left out. A presenter that does not fold lists everything in full and
+ * records nothing, so its full screens cost no digest pass. The first screen
+ * of a step has nothing to fold against, and a truncated listing never folds,
  * since the nodes past the cut are unknown. */
 function renderFull(
   observation: ExecutorObservation,
   fullyShown?: ReadonlyMap<string, FullyShownSubtree>,
+  fold = false,
 ): RenderedFullScreen {
   if (observation.treeUnavailable === true) {
     return {
@@ -534,11 +558,11 @@ function renderFull(
   }
   const nodes = indexScreen(observation).nodes;
   const head = `${CURRENT_SCREEN}revision ${observation.revision}${describeLocation(observation)}, ${String(nodes)} nodes):\n`;
-  if (fullyShown === undefined || observation.truncated) {
+  if (!fold || fullyShown === undefined || observation.truncated) {
     const entries = treeEntries(observation);
     return {
       text: `${head}${observation.text}`,
-      listed: observation.truncated ? new Map() : subtreeDigests(entries, spanEnds(entries)),
+      listed: fold && !observation.truncated ? subtreeDigests(entries, spanEnds(entries)) : new Map(),
       folded: new Set(),
     };
   }
@@ -586,10 +610,13 @@ function spanEnds(entries: readonly TreeEntry[]): number[] {
 
 /**
  * The digest of every subtree large enough to fold: its node lines, focus
- * stripped and unindented, in document order. Focus moves with every action,
+ * stripped and unindented to the subtree root, in document order. Focus moves with every action,
  * so it is left out the way the fold's own comparison leaves it out. Lines
  * are joined with a separator no node line carries, so two different subtrees
- * cannot digest alike by regrouping lines. A smaller subtree never folds, so
+ * cannot digest alike by regrouping lines. Keeping the indentation relative
+ * to the subtree root matters: a node that moved to a different parent reads
+ * the same unindented, and a digest that stripped every level would fold the
+ * move away as unchanged. A smaller subtree never folds, so
  * it needs no digest: it is listed in full whenever a screen goes out whole,
  * which puts it on record at that revision if it later grows large enough.
  */
@@ -601,7 +628,7 @@ function subtreeDigests(entries: readonly TreeEntry[], ends: readonly number[]):
     if (ends[index]! - index - 1 < MIN_FOLD_NODES) continue;
     const lines: string[] = [];
     for (let inner = index; inner < ends[index]!; inner += 1) {
-      lines.push(withoutFocus(entries[inner]!.raw).trimStart());
+      lines.push(withoutFocus(entries[inner]!.raw).slice(entry.indent));
     }
     digests.set(entry.id, sha256Hex(lines.join('\n')));
   }

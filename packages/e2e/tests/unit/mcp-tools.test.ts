@@ -2,11 +2,12 @@ import type { Tool, ToolSet } from 'ai';
 import { z } from 'zod';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadAiSdk } from '@e2e-dev/core/lib/agent/ai-sdk';
+import type { ExecutorObservation, StepExecutorContext } from '@e2e-dev/core/lib/agent/executor';
 import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { TestError } from '@e2e-dev/core/lib/internal/errors';
 import { createSessionCatalog } from '../../src/session-tools/catalog.ts';
-import { catalogLine, describeToolDetail, errorResult, invokeTool, resultFromOutput, toolJsonSchema } from '../../src/session-tools/tools.ts';
+import { catalogLine, describeToolDetail, errorResult, invokeTool, resultFromOutput, toolJsonSchema, type McpToolResult } from '../../src/session-tools/tools.ts';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
 
 const extra = { signal: new AbortController().signal };
@@ -202,5 +203,73 @@ describe('errorResult', () => {
   it('prefixes runner errors with their code and leaves foreign errors as their message', () => {
     expect(errorResult(new TestError('ACTION_FAILED', 'covered'))).toEqual({ content: [{ type: 'text', text: 'ACTION_FAILED: covered' }], isError: true });
     expect(errorResult(new Error('boom'))).toEqual({ content: [{ type: 'text', text: 'boom' }], isError: true });
+  });
+});
+
+describe('session catalog folding', () => {
+  /** A sidebar of 12 links under a navigation node, and a main that changes wholesale. */
+  const sidebar = [
+    ' #n2 navigation "Sidebar"',
+    ...Array.from({ length: 12 }, (_, i) => `  #n${String(i + 3)} link "Item ${String(i + 1)}"`),
+  ];
+  const mainList = [
+    ' #n20 main "Order list"',
+    '  #n21 heading "Orders"',
+    '  #n22 button "Order 1"',
+    '  #n23 button "Order 2"',
+  ];
+  const mainDetails = [
+    ' #n20 main "Order details"',
+    '  #n30 heading "Order 42"',
+    '  #n31 text "Total $12"',
+    '  #n32 text "Placed yesterday"',
+    '  #n33 button "Refund"',
+    '  #n34 button "Ship"',
+    '  #n35 button "Print"',
+    '  #n36 button "Archive"',
+    '  #n37 link "Back to orders"',
+  ];
+  const observation = (revision: string, main: readonly string[]): ExecutorObservation => ({
+    revision,
+    text: ['#n1 document "Orders"', ...sidebar, ...main].join('\n'),
+    truncated: false,
+    viewport: { width: 1280, height: 720 },
+  });
+  const textOf = (result: McpToolResult): string =>
+    result.content.map((item) => (item.type === 'text' ? item.text : '')).join('\n');
+
+  it('folds a large unchanged subtree in an action result, and observe returns it whole again', async () => {
+    const { context } = fakeExecutorContext();
+    const observations = [observation('b1', mainList), observation('b2', mainDetails), observation('b2', mainDetails)];
+    let calls = 0;
+    // The session's presenter, as open_session builds it: the one caller that turns folding on.
+    const scripted: StepExecutorContext = {
+      ...context,
+      observe: (async () => observations[Math.min(calls++, observations.length - 1)]!) as StepExecutorContext['observe'],
+      actions: { ...context.actions, tap: (async () => undefined) as StepExecutorContext['actions']['tap'] },
+    };
+    const { tools } = createSessionCatalog({
+      context: scripted,
+      screen: new ScreenPresenter({ foldUnchangedSubtrees: true }),
+      locator: { resolveNow: async () => [] } as never,
+      session: {} as never,
+      tools: {},
+      redaction: { redact: (text) => text, redactCut: (text) => text },
+      projectRoot: '/project',
+      attemptDir: '/project/.e2e/results/attempt',
+      recorder: undefined,
+      warn: () => undefined,
+    });
+    const opened = await invokeTool('observe', tools['observe']!, {}, extra);
+    expect(textOf(opened)).toContain('#n3 link "Item 1"');
+    expect(textOf(opened)).not.toContain('unchanged since revision');
+    const tapped = await invokeTool('tap', tools['tap']!, { target: 'n22' }, extra);
+    const tappedText = textOf(tapped);
+    expect(tappedText).toContain('Tapped #n22.');
+    expect(tappedText).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(tappedText).not.toContain('#n3 link "Item 1"');
+    const again = await invokeTool('observe', tools['observe']!, {}, extra);
+    expect(textOf(again)).toContain('#n3 link "Item 1"');
+    expect(textOf(again)).not.toContain('unchanged since revision');
   });
 });

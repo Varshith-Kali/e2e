@@ -364,12 +364,12 @@ summaries, and your context; never raw HTML, cookies, headers, environment
 values, or a `Secret`'s value; password fields masked, unless a page
 script hides one from e2e. The first screen of a step arrives whole; later
 action results report what changed, keyed by node ids stable while an
-element exists, or the whole screen when most changed, with large subtrees
-unchanged since the screen that last listed them in full folded to one line
-each, naming the node count and that revision. `observe` returns what
-changed since the last screen, not the whole tree; only the MCP `observe`
-returns the complete tree every time. Pixels arrive through `vision` on a
-judgment or the act loop's
+element exists, or the whole screen when most changed. `observe` returns
+what changed since the last screen, not the whole tree; only the MCP
+`observe` returns the complete tree every time, and only in MCP sessions
+are large unchanged subtrees folded to one line each, naming the node count
+and the revision that last listed them in full, with the ids inside staying
+valid. Pixels arrive through `vision` on a judgment or the act loop's
 `screenshot` and point tools, with secure fields masked. When
 the browser engine's tree capture times out, the model gets a screenshot and
 a warning, a judgment needs `vision: true`, and no control may be inferred
