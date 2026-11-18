@@ -161,10 +161,8 @@ export function reportsScreenChange(text: string): boolean {
 
 /**
  * What a screen presenter is built with. Folding large unchanged subtrees
- * is off unless a caller turns it on: only the MCP session does, since it is
- * the one caller whose `observe` returns the whole tree, so a folded subtree
- * stays readable, and whose transcript is never compacted, so the screen a
- * fold names is never elided. Every other loop lists its full screens whole.
+ * is off unless a caller turns it on: only the MCP session does, and the
+ * module header says why. Every other loop lists its full screens whole.
  */
 export interface ScreenPresenterOptions {
   /** Fold large unchanged subtrees in full-screen renders; off by default. */
@@ -247,9 +245,8 @@ export class ScreenPresenter {
    * a subtree it neither listed nor folded is not on record afterwards, so
    * a later fold can never name a screen this render did not show. A
    * truncated render lists and folds nothing, so it clears the record
-   * entirely: the screens the old records named may already be elided from
-   * the transcript, and a fold naming one would point at content the model
-   * no longer holds.
+   * entirely: the record holds only what the latest full render showed in
+   * full, and a render cut short showed nothing in full.
    */
   private noteListed(listed?: ReadonlyMap<string, string>, folded?: ReadonlySet<string>): void {
     const shown = this.shown;

@@ -75,7 +75,7 @@ const changingBigScreen = (variant: () => number) =>
       ),
   });
 
-/** A dense page whose sidebar sits at the end, as the review's repro: about 900 nodes, the sidebar last, so the overflow clip cuts it off the screen. The rows change per model turn, never per capture: the observation feed re-captures until the screen settles, and a variant that moved on every capture would never settle. */
+/** A dense page whose sidebar sits at the end: about 900 nodes, the sidebar last, so the overflow clip cuts it off the screen. The rows change per model turn, never per capture: the observation feed re-captures until the screen settles, and a variant that moved on every capture would never settle. */
 const foldingBigScreen = (variant: () => number) =>
   defineEngine({
     name: 'fake',
@@ -178,8 +178,7 @@ describe('tool loop context overflow', () => {
     expect(second).toMatch(/Current screen \(revision b\d+/);
     expect(second).toContain('#n901 link "Item 1"');
     expect(second).not.toContain('unchanged since revision');
-    // The retry elided the opening screen, since no fold line depends on it
-    // anymore, and cut the newest result's tail, sidebar included.
+    // The retry elided the opening screen and cut the newest result's tail, sidebar included.
     expect(loopCalls[2]!.prompt).toContain('[earlier screen elided');
     expect(loopCalls[2]!.prompt).not.toContain('link "Item 1"');
     expect(loopCalls[2]!.lastToolResult).toContain("more characters cut: the request exceeded the model's context window");

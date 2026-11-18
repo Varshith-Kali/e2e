@@ -52,9 +52,7 @@ const SESSION_INSTRUCTION = 'Interactive session: a coding agent drives the app 
 
 /**
  * The session's screen presenter, with folding on: the session is the one
- * caller that turns it on, since its `observe` returns the whole tree, so a
- * folded subtree stays readable, and its transcript is never compacted, so
- * the screen a fold names is never elided.
+ * caller that turns it on.
  */
 export function createSessionScreenPresenter(): ScreenPresenter {
   return new ScreenPresenter({ foldUnchangedSubtrees: true });
