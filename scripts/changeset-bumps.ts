@@ -215,7 +215,7 @@ export function collectFloorRaiseInputs(
         alreadyFlagged: flagged.has(manifest.name),
         announcedByVersionBump:
           (fellBack && previous.version !== undefined && versionBumpAnnounces(previous.version, manifest.version)) ||
-          // A sibling major moves every peer to `>=<major>.0.0 <major+1>`; the sibling's major is the announcement, but only while it is still unreleased: a tag for the sibling's version means the major has shipped, and a later floor raise to it needs its own **Breaking:** minor.
+          // A sibling major moves every peer to `>=<major>.0.0 <major+1>` (restore-peer-ranges.ts); the sibling's major is the announcement, but only while it is still unreleased: a tag for the sibling's version means the major has shipped, and a later floor raise to it needs its own **Breaking:** minor.
           siblingMajorAnnounces(
             previousFloor,
             currentFloor,
@@ -227,6 +227,7 @@ export function collectFloorRaiseInputs(
   }
   return { inputs, skipped };
 }
+
 /**
  * Every floor raise in `inputs` that no pending changeset announces as a
  * `**Breaking:**` minor. A package whose bump `disallowedBumps` already

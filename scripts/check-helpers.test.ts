@@ -37,16 +37,15 @@ describe('hasReleaseTag', () => {
     // out at depth 1 with no tags, so reading the live repo's tags
     // fails there. Replacing the lookup with `false` must fail the
     // first assertion: the sibling-major announcement in
-    // check-changeset-bumps.ts hangs on this call.
+    // check-changeset-bumps.ts hangs on this call. The tag points at a
+    // blob, not a commit, so no global git config (identity, commit
+    // hooks, signing) can break the test: `hasReleaseTag` only lists
+    // tags, and listing needs no commit.
     const dir = mkdtempSync(join(tmpdir(), 'e2e-release-tag-'));
     try {
       execFileSync('git', ['init', '--quiet'], { cwd: dir });
-      execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@e2e.dev']);
-      execFileSync('git', ['-C', dir, 'config', 'user.name', 'e2e test']);
-      writeFileSync(join(dir, 'README.md'), 'test\n');
-      execFileSync('git', ['-C', dir, 'add', '.']);
-      execFileSync('git', ['-C', dir, 'commit', '--quiet', '-m', 'init']);
-      execFileSync('git', ['-C', dir, 'tag', 'e2e@0.23.0']);
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: 'test\n', encoding: 'utf8' }).trim();
+      execFileSync('git', ['-C', dir, 'tag', 'e2e@0.23.0', blob]);
       assert.equal(hasReleaseTag('e2e', '0.23.0', dir), true);
       assert.equal(hasReleaseTag('e2e', '99.99.99', dir), false);
       assert.equal(hasReleaseTag('@e2e-dev/docs', '0.0.0', dir), false);
