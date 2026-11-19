@@ -1,7 +1,7 @@
 /** Shares one browser process connection across a worker's attempts. */
 
 import type { Browser, BrowserType, ConnectOverCDPOptions } from 'playwright-core';
-import { EngineError } from 'e2e/engine';
+import { EngineError } from '@e2e-dev/core/engine';
 import { SELECTOR_ENGINES } from './selector-engines.ts';
 import { message } from './support.ts';
 
