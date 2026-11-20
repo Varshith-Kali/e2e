@@ -11,6 +11,7 @@ import { MAX_TIMER_MS } from '@e2e-dev/core/lib/internal/time';
 import { validateTitle } from '@e2e-dev/core/lib/internal/ids';
 import { realmSlot } from '@e2e-dev/core/lib/internal/realm-slot';
 import { markRunningTestExpectedToFail } from '@e2e-dev/core/lib/internal/expected-failure';
+import { setRunningTestTimeout } from '@e2e-dev/core/lib/internal/test-timeout';
 import { parseModifierCall, skipRunningTest } from '../internal/skip.ts';
 import { formatEachTitle, readRows } from './each.ts';
 import { unknownKeyMessage } from '@e2e-dev/core/lib/internal/options';
@@ -821,6 +822,9 @@ function createTestAPI(chain: readonly FixtureDefinition[]): TestAPI {
       }
       markRunningTestExpectedToFail(call.condition, call.reason);
       return undefined;
+    },
+    setTimeout(timeout: number): void {
+      setRunningTestTimeout(timeout);
     },
     skipIf(condition: unknown): TestRegistrar<object> {
       return registrar('test.skipIf()', readCondition('test.skipIf()', condition));

@@ -242,11 +242,12 @@ export interface AttemptDeadlineMessage {
   /** The attempt's record id and start, which a watchdog kill reports it with. */
   readonly attemptId: string;
   readonly startedAt: string;
-  /** The test's resolved `timeout`. */
+  /** The test's resolved `timeout`, or what `test.setTimeout` changed it to. */
   readonly timeoutMs: number;
   /**
    * What is left of it, when the test clock runs again after `e2e run --step`
-   * held a step; absent when the attempt starts, with all of it left.
+   * held a step or `test.setTimeout` moved it; absent when the attempt
+   * starts, with all of it left.
    */
   readonly remainingMs?: number;
   /** How long past the timeout the worker may go without answering a `ping`: the cleanup budget. */

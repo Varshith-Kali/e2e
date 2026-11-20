@@ -663,6 +663,9 @@ test.for([[1, 'one']])('%i', async (n: number) => { void n; });
 // fail takes the same three shapes and returns nothing inside a body; describe and setup take no fail option.
 test.fail(true, 'known gap');
 test.fail('known gap');
+test.setTimeout(60_000);
+// @ts-expect-error the timeout is a number of milliseconds
+test.setTimeout('60s');
 test.fail('gap', async () => {}) satisfies ReturnType<typeof test>;
 void (test.fail(false) satisfies void);
 test('gap', { fail: 'known gap' }, async () => {});

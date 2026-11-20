@@ -304,10 +304,10 @@ suites that consume the built packages the way a user would.
   block that runs `npx` or `npm install`/`ci` sits in a `<CodeGroup>` of
   `npm`, `pnpm`, and `bun` blocks, which the site syncs site-wide, enforced
   by `scripts/check-docs-package-managers.ts`).
-  `docs/ja/`, `docs/zh/`, `docs/cs/`, `docs/es/`, and `docs/pt/` hold the
-  Japanese, Simplified Chinese, Czech, Spanish, and Brazilian Portuguese
-  translations, one page per English page at the same path, with the tab
-  and group labels in `docs/<language>/navigation.json`. Translations are best
+  `docs/ja/`, `docs/zh/`, `docs/cs/`, `docs/es/`, `docs/pt/`, and `docs/hi/`
+  hold the Japanese, Simplified Chinese, Czech, Spanish, Brazilian Portuguese,
+  and Hindi translations, one page per English page at the same path, with the
+  tab and group labels in `docs/<language>/navigation.json`. Translations are best
   effort: keep the English pages current in every change, and leave the
   translations to lag behind, since no contributor is expected to update a
   language they don't speak. `scripts/check-docs-translations.ts` warns on a
@@ -393,7 +393,7 @@ suites that consume the built packages the way a user would.
 Build first — nearly everything downstream consumes `dist`.
 
 ```bash
-pnpm check          # lint -> check:dead-code -> typecheck -> docs:check-errors -> check:peer-ranges -> check:changeset-bumps -> check:install-scripts -> plugins:check -> mcp-server:check -> docs:check (full gate)
+pnpm check          # lint -> check:dead-code -> typecheck -> docs:check-errors -> check:peer-ranges -> check:changeset-bumps -> check:examples -> check:benchmark-coverage -> check:install-scripts -> plugins:check -> mcp-server:check -> docs:check (full gate)
 pnpm test           # builds, then vitest unit + integration
 pnpm test:testbed   # builds, then runs the real CLI against the playground app
 pnpm test:web-benchmark   # builds, then runs the real CLI against the benchmark scenarios

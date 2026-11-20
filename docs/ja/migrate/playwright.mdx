@@ -163,6 +163,7 @@ test('checkout', async ({ app, agent, screen }) => {
 | `import { test, expect } from '@playwright/test'` | `import { test } from '@e2e-dev/web'` と `import { expect } from 'e2e'` |
 | テストの `{ page }` | `{ screen, app, browser }` |
 | `test()`, `test.describe()`, `test.only`, `test.fail()`, `test.skip(title, fn)`, `test.skip(condition, reason)` | 同じ。条件付きの `skip` はテスト本体または `beforeEach` 内で利用可能 |
+| `test.setTimeout()` | テスト本体、`beforeEach`、`beforeAll`（そのフック自身のタイムアウト）では同じ。`afterEach` と `afterAll` からは呼び出せません。`describe` のコールバック内では、代わりに `test.describe` に `{ timeout }` を渡します。タイムアウトなしを意味する `0` はないため、大きな値を渡します |
 | `beforeEach`, `afterEach`, `beforeAll`, `afterAll` | 同じ。ただしタイトルなし。`beforeAll` と `afterAll` が受け取るのはワーカーフィクスチャで、`browser`、`app`、`screen` は受け取らない |
 | `test.describe.skip`, `test.describe.serial`, `describe.configure({ mode: 'serial', retries, timeout })` | `test.describe(title, { skip, serial, retries, timeout }, fn)` |
 | `{ tag: '@smoke' }` | テストまたはグループの `{ tags: ['smoke'] }` |
@@ -280,7 +281,7 @@ export const test = base.extend<{ accountPage: AccountPage }>({
 | `globalSetup`、`globalTeardown`、`webServer` の配列 | 実行の前後を囲むスクリプト、または全プロセスを起動する 1 つの `app.command` |
 | `projects[].testMatch`, `testDir`, `testIgnore`, `grep` | テストの `platforms` やタグ、またはターゲットごとに別の実行 |
 | `--ui`, `npx playwright show-report`, `--reporter html` | `--watch --headed`。`npx e2e report`（`htmlReporter()` が書き出す `<output>/report.html` を開く） |
-| `test.setTimeout()`、`test.slow()`、`test.fixme()`、`test.describe.only()`、describe に対する `test.fail()` | テストやグループに `{ timeout }` または `{ skip: 'reason' }`。各テストに `test.only` と `test.fail()` |
+| `test.slow()`、`test.fixme()`、`test.describe.only()`、describe に対する `test.fail()` | テストやグループに `{ timeout }` または `{ skip: 'reason' }`。各テストに `test.only` と `test.fail()` |
 | `failOnFlakyTests`, `use.navigationTimeout`, `--timeout`, `--quiet` | `report.json` の `run.summary.flaky`。`browser.goto(url, { timeout })`。設定の `timeout` |
 | `blob` レポーターと `merge-reports` | シャードごとに 1 つのレポート |
 | Playwright の Docker イメージ | `@e2e-dev/web` が固定する `playwright-core` バージョンのイメージ、または `npx @e2e-dev/web install chromium --with-deps` |

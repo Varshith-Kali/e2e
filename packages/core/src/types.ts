@@ -942,6 +942,18 @@ export interface TestAPI<Fixtures = TestFixtures, Worker = WorkerFixtures> exten
    */
   fail(condition: boolean, reason?: string): void;
   fail(reason?: string): void;
+  /**
+   * Inside a running test or a `beforeEach` hook: gives the test a timeout
+   * of `timeout` ms, counted from the start of the attempt like the
+   * `timeout` option, which it replaces for this attempt. A timeout shorter
+   * than the time already spent times the test out at once. Inside a
+   * `beforeAll` hook: gives that hook a timeout of `timeout` ms, counted from
+   * its start. `afterEach` and `afterAll` hooks run on `cleanupTimeout` and
+   * cannot change it. A timeout that is not a positive integer is
+   * `INVALID_ARGUMENT`; outside a running test or hook the call is
+   * `COLLECTION_ERROR`, so use the `timeout` option there.
+   */
+  setTimeout(timeout: number): void;
   /** Registers one focused local test. CI rejects focused tests. */
   only(title: string, fn: TestFn<Fixtures & Worker>): TestCase;
   /** Registers one setup test with statically declared session outputs. */

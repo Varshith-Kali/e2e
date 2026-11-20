@@ -124,7 +124,7 @@ function pageFor(path: string): string | undefined {
 }
 
 /** The languages the docs are translated into, each a folder under `docs/` (`check-docs-translations.ts`). */
-const LANGUAGES = new Set(['ja', 'zh', 'cs', 'es', 'pt']);
+const LANGUAGES = new Set(['ja', 'zh', 'cs', 'es', 'pt', 'hi']);
 
 /**
  * The English page a translation (`docs/ja/quickstart.mdx`) translates, or
