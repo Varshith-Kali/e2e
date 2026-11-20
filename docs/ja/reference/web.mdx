@@ -43,6 +43,7 @@ web({ viewport: { width: 390, height: 844 }, locale: 'de-DE' });
 | オプション | 型 | デフォルト |
 | --- | --- | --- |
 | [`browser`](#browser) | `BrowserName \| BrowserProvider` | `'chromium'` |
+| [`chromiumSandbox`](#chromiumsandbox) | `boolean` | `true`（Linux では `false`） |
 | [`viewport`](#viewport) | `ViewportSize \| null` | 1280 × 720 |
 | [`screencast`](#screencast) | `WebScreencastOptions` | ビューポートのサイズ |
 | [`connect`](#connect) | `WebConnectOptions` | ローカルで起動 |
@@ -82,6 +83,23 @@ web({ browser: 'firefox' }); // default: 'chromium'
 | エラー | 発生条件 |
 | --- | --- |
 | `INVALID_CONFIG` | `browser: provider` と `connect` を併用した場合。 |
+
+#### `chromiumSandbox`
+
+ローカルで起動する Chromium を OS のサンドボックス付きで動かすかどうかです。
+
+```ts
+web({ chromiumSandbox: true }); // default: true on macOS and Windows, false on Linux
+```
+
+- サンドボックスは、エージェントが到達したページでのレンダラーの脆弱性悪用を封じ込める助けになります。[セキュリティ](/security)を参照してください。
+- Linux のサンドボックスには非特権ユーザー名前空間が必要ですが、root、多くのコンテナ、Ubuntu 23.10 以降はこれをブロックします。許可しているホストでは `true` を設定してください。
+- `connect` やプロバイダー経由のブラウザはそのホストが起動し、Firefox と WebKit にはこのオプションがないため、いずれもこの設定を読みません。
+
+| エラー | 発生条件 |
+| --- | --- |
+| `INVALID_CONFIG` | 真偽値以外の値を渡した場合（設定の読み込み時）。 |
+| `ENGINE_FAILURE` | サンドボックスが有効で、このホストでは起動できない場合。 |
 
 #### `viewport`
 

@@ -46,7 +46,7 @@ import {
 } from '@e2e-dev/core/engine';
 import { matchesText } from '@e2e-dev/core/engine';
 import { classifyActionError, classifyInputError, dispatchLocatorAction, dispatchPointerAction } from './actions.ts';
-import { BrowserConnection, connectCdp, resolveChromiumSandbox, type BrowserName, type ChromiumSandbox } from './browser-connection.ts';
+import { BrowserConnection, connectCdp, defaultChromiumSandbox, type BrowserName } from './browser-connection.ts';
 import { AttemptSession, type AttemptTab, type StorageState } from './attempt-session.ts';
 import type { CdpEndpointResolver } from './cdp-recovery.ts';
 import { LeasedBrowsers, type BrowserProvider, type LeaseDownloads } from './provider.ts';
@@ -179,8 +179,8 @@ export interface WebOptions {
    */
   readonly browser?: BrowserName | BrowserProvider;
   /**
-   * Whether a locally launched Chromium runs with its OS sandbox on, `true` by default.
-   * See [Security](https://e2e.com/docs/security) for why it defaults on and when to turn it off.
+   * Whether a locally launched Chromium runs with its OS sandbox on; default
+   * `true` on macOS and Windows, `false` on Linux.
    */
   readonly chromiumSandbox?: boolean;
   /**
@@ -302,10 +302,7 @@ export class PlaywrightSurface {
 
   private readonly browserName: BrowserName;
   private readonly connection = new BrowserConnection();
-  /** The `web({ chromiumSandbox })` option, when the config sets one. */
-  private readonly chromiumSandboxOption: boolean | undefined;
-  /** Whether the shared Chromium launches with its sandbox on, and where the value came from: the option, then the run's environment, then on, resolved at `init`. */
-  private chromiumSandbox: ChromiumSandbox = { enabled: true, fromOption: false };
+  private readonly chromiumSandbox: boolean;
   private readonly connect: WebConnectOptions | undefined;
   /** The provider's browsers, when `browser` names one; the runner and worker halves of the lease bookkeeping. */
   private readonly leases: LeasedBrowsers | undefined;
@@ -349,7 +346,7 @@ export class PlaywrightSurface {
 
   constructor(options: WebOptions) {
     this.browserName = typeof options.browser === 'string' ? options.browser : 'chromium';
-    this.chromiumSandboxOption = options.chromiumSandbox;
+    this.chromiumSandbox = options.chromiumSandbox ?? defaultChromiumSandbox();
     this.leases = typeof options.browser === 'object' && options.browser !== null ? new LeasedBrowsers(options.browser) : undefined;
     this.connect = options.connect;
     this.viewport = options.viewport === undefined ? DEFAULT_VIEWPORT : options.viewport;
@@ -408,7 +405,6 @@ export class PlaywrightSurface {
     this.credentialScope = credentialOrigins(info.app.origin, this.credentialOrigins);
     this.projectRoot = info.projectRoot;
     this.headed = info.headed;
-    this.chromiumSandbox = resolveChromiumSandbox(this.chromiumSandboxOption, info.env);
     this.leases?.init(info);
     // The browser was installed in `prepare`; a launch or attach is the one
     // boot step left that can outlive a launch budget, and it honours the
@@ -435,7 +431,6 @@ export class PlaywrightSurface {
   private async acquireBrowser(signal: AbortSignal): Promise<Browser> {
     const verb = this.connect === undefined && this.leases === undefined ? 'launch' : 'connect';
     if (signal.aborted) throw cancelled(`browser ${verb} cancelled`);
-    const connect = this.connector(signal);
     try {
       return await raceAbort(
         this.connection.acquire({
@@ -443,7 +438,7 @@ export class PlaywrightSurface {
           headed: this.headed,
           timeoutMs: BROWSER_LAUNCH_TIMEOUT_MS,
           chromiumSandbox: this.chromiumSandbox,
-          ...(connect === undefined ? {} : { connect }),
+          connect: this.connector(signal),
         }),
         signal,
         `browser ${verb}`,

@@ -20,7 +20,6 @@ import type {
   TextPattern,
 } from '@e2e-dev/core/engine';
 import { web } from '../../src/index.ts';
-import { browserTestEnv } from '../helpers/environment.ts';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 
@@ -73,7 +72,7 @@ async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
     targetName: 'web',
     projectRoot: process.cwd(),
     app: { site: new URL(app.url).hostname },
-    env: browserTestEnv(),
+    env: {},
     headed: false,
     workerSlot: 0,
     log: () => undefined,

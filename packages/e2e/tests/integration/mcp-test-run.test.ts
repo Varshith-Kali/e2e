@@ -431,7 +431,7 @@ describe('open_session {test}', { timeout: 120_000 }, () => {
         configPath,
       }),
       loadEngineConfig: () => Promise.reject(new Error('these sessions open on the config')),
-      env: { E2E_CHROMIUM_SANDBOX: process.env['E2E_CHROMIUM_SANDBOX'] },
+      env: {},
       headed: false,
       log: () => undefined,
     });

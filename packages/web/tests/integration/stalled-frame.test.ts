@@ -7,7 +7,7 @@
 import type { Browser, BrowserContext, Page, Route } from 'playwright-core';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { OperationContext } from '@e2e-dev/core/engine';
-import { BrowserConnection, resolveChromiumSandbox } from '../../src/browser-connection.ts';
+import { BrowserConnection, defaultChromiumSandbox } from '../../src/browser-connection.ts';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../../src/closed-shadow.ts';
 import { captureObservation } from '../../src/observation-capture.ts';
 import { capturePixels } from '../../src/observe.ts';
@@ -30,8 +30,7 @@ const operation: OperationContext = {
 
 beforeAll(async () => {
   app = await startFixtureApp();
-  // A direct launch bypasses the surface, so the flag resolves here from the ambient environment: sandboxed unless the run opts out.
-  const browser: Browser = await connection.acquire({ name: 'chromium', headed: false, timeoutMs: 30_000, chromiumSandbox: resolveChromiumSandbox(undefined, process.env) });
+  const browser: Browser = await connection.acquire({ name: 'chromium', headed: false, timeoutMs: 30_000, chromiumSandbox: defaultChromiumSandbox() });
   context = await browser.newContext({ viewport: { width: 320, height: 200 } });
   await context.addInitScript(CLOSED_SHADOW_ROOTS_INIT_SCRIPT);
 });
