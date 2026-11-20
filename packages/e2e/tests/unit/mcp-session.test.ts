@@ -184,13 +184,13 @@ describe('session screen presenter', () => {
     const firstRevision = revisionMatch[1]!;
     // The first screen lists the sidebar whole: no fold line yet.
     expect(opened).toContain('link "Item 1"');
-    expect(opened).not.toContain('unchanged since revision');
+    expect(opened).not.toContain('same as revision');
     const tapped = await sessionHost.call(id, 'tap', { target: 'order-1' }, { signal: new AbortController().signal });
     const text = textOf(tapped);
     expect(text).toContain('Tapped #order-1.');
     // The session's own presenter folds: a plain presenter would list the
     // sidebar in full here instead.
-    expect(text).toContain(`(12 nodes inside, unchanged since revision ${firstRevision})`);
+    expect(text).toContain(`(12 nodes inside, same as revision ${firstRevision})`);
     expect(text).not.toContain('link "Item 1"');
     expect(text).toContain('heading "Order 42"');
     await sessionHost.close('done', id);

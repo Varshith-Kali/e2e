@@ -356,8 +356,10 @@ none for a verb it does not. A tool that targets a node takes its id from the
 newest observation. Every tool returns what changed on screen and is
 recorded for the [replay cache](/cache), with its node when it has one. When
 most of the screen changed, the result sends the whole new screen instead. By
-default it lists every node in full; in MCP sessions, large unchanged
-subtrees are folded to one line each. On an engine that declares
+default it lists every node in full; in MCP sessions, large subtrees that
+match an earlier listing are folded to one line each, naming how many nodes
+each holds and the revision it matches (`same as revision b1`). On an engine
+that declares
 `tapModifiers`, `tap`, `double_tap`, and `right_click` take `modifiers`
 (`Shift`, `Control`, `Alt`, `Meta`, `ControlOrMeta`) to hold keys for the
 click, as a Shift-click extends a selection.

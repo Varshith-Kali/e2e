@@ -263,14 +263,14 @@ describe('session catalog folding', () => {
     });
     const opened = await invokeTool('observe', tools['observe']!, {}, extra);
     expect(textOf(opened)).toContain('#n3 link "Item 1"');
-    expect(textOf(opened)).not.toContain('unchanged since revision');
+    expect(textOf(opened)).not.toContain('same as revision');
     const tapped = await invokeTool('tap', tools['tap']!, { target: 'n22' }, extra);
     const tappedText = textOf(tapped);
     expect(tappedText).toContain('Tapped #n22.');
-    expect(tappedText).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(tappedText).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
     expect(tappedText).not.toContain('#n3 link "Item 1"');
     const again = await invokeTool('observe', tools['observe']!, {}, extra);
     expect(textOf(again)).toContain('#n3 link "Item 1"');
-    expect(textOf(again)).not.toContain('unchanged since revision');
+    expect(textOf(again)).not.toContain('same as revision');
   });
 });

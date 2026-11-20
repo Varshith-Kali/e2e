@@ -11,11 +11,11 @@
  * to one line each, naming the revision that last listed them in full, so a
  * persistent sidebar is not repeated on every page transition: only MCP
  * turns folding on, since it is the one caller with a whole-tree `observe`
- * to read a folded subtree back and no transcript compaction to elide the
- * screen a fold names. A fold line never names a revision that only
- * reported the subtree as a diff, or that itself folded it: the presenter
- * remembers, per subtree, the revision that last listed it whole and what
- * it read then.
+ * to read a folded subtree back. An MCP client that compacted its own
+ * context gets the subtree back with `observe`. A fold line never names a
+ * revision that only reported the subtree as a diff, or that itself folded
+ * it: the presenter remembers, per subtree, the revision that last listed
+ * it whole and what it read then.
  *
  * A screen may carry its pixels too. The presenter is where a screenshot
  * joins the text: it notes the image's size and coordinate space under the
@@ -68,7 +68,7 @@ const KEYBOARD_LINE = /^#\S+ keyboard\b/;
 /** A subtree as the model last saw it whole: the revision that listed it in full, and what it read then. */
 interface FullyShownSubtree {
   readonly revision: string;
-  /** SHA-256 of the subtree's node lines, focus stripped, in document order. */
+  /** SHA-256 of the subtree's node lines, in document order. */
   readonly digest: string;
 }
 
@@ -450,11 +450,14 @@ function renderFull(
   }
   const nodes = indexScreen(observation).nodes;
   const head = `${CURRENT_SCREEN}revision ${observation.revision}${describeLocation(observation)}, ${String(nodes)} nodes):\n`;
-  if (!fold || fullyShown === undefined || observation.truncated) {
+  if (!fold || observation.truncated) {
+    return { text: `${head}${observation.text}`, listed: new Map(), folded: new Set() };
+  }
+  if (fullyShown === undefined) {
     const entries = treeEntries(observation);
     return {
       text: `${head}${observation.text}`,
-      listed: fold && !observation.truncated ? subtreeDigests(entries, spanEnds(entries)) : new Map(),
+      listed: subtreeDigests(entries, spanEnds(entries)),
       folded: new Set(),
     };
   }
@@ -501,16 +504,15 @@ function spanEnds(entries: readonly TreeEntry[]): number[] {
 }
 
 /**
- * The digest of every subtree large enough to fold: its node lines, focus
- * stripped and unindented to the subtree root, in document order. Focus moves with every action,
- * so it is left out the way the fold's own comparison leaves it out. Lines
- * are joined with a separator no node line carries, so two different subtrees
- * cannot digest alike by regrouping lines. Keeping the indentation relative
- * to the subtree root matters: a node that moved to a different parent reads
- * the same unindented, and a digest that stripped every level would fold the
- * move away as unchanged. A smaller subtree never folds, so
- * it needs no digest: it is listed in full whenever a screen goes out whole,
- * which puts it on record at that revision if it later grows large enough.
+ * The digest of every subtree large enough to fold: its node lines,
+ * unindented to the subtree root, in document order. Lines are joined with
+ * a separator no node line carries, so two different subtrees cannot digest
+ * alike by regrouping lines. Keeping the indentation relative to the subtree
+ * root matters: a node that moved to a different parent reads the same
+ * unindented, and a digest that stripped every level would fold the move
+ * away as unchanged. A smaller subtree never folds, so it needs no digest:
+ * it is listed in full whenever a screen goes out whole, which puts it on
+ * record at that revision if it later grows large enough.
  */
 function subtreeDigests(entries: readonly TreeEntry[], ends: readonly number[]): Map<string, string> {
   const digests = new Map<string, string>();
@@ -520,7 +522,7 @@ function subtreeDigests(entries: readonly TreeEntry[], ends: readonly number[]):
     if (ends[index]! - index - 1 < MIN_FOLD_NODES) continue;
     const lines: string[] = [];
     for (let inner = index; inner < ends[index]!; inner += 1) {
-      lines.push(withoutFocus(entries[inner]!.raw).slice(entry.indent));
+      lines.push(entries[inner]!.raw.slice(entry.indent));
     }
     digests.set(entry.id, sha256Hex(lines.join('\n')));
   }
@@ -544,7 +546,7 @@ function hasFocus(line: string): boolean {
  * last token of a line.
  */
 function stateBracket(line: string): { readonly states: string; readonly before: string } | undefined {
-  const match = / \[([^\]]*)\]$/.exec(line);
+  const match = / \[([^[\]]*)\]$/.exec(line);
   return match === null ? undefined : { states: match[1]!, before: line.slice(0, match.index) };
 }
 
@@ -586,7 +588,7 @@ function foldUnchangedSubtrees(
       shown !== undefined && digests.get(entry.id) === shown.digest &&
       !subtreeHoldsFocus(entries, index, end)
     ) {
-      out.push(`${entry.raw} (${String(inside)} nodes inside, unchanged since revision ${shown.revision})`);
+      out.push(`${entry.raw} (${String(inside)} nodes inside, same as revision ${shown.revision})`);
       foldedSpans.push({ start: index, end });
       foldedIds.add(entry.id);
       index = end;

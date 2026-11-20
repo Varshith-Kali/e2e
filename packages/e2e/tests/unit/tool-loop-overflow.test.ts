@@ -177,7 +177,7 @@ describe('tool loop context overflow', () => {
     const second = loopCalls[1]!.lastToolResult;
     expect(second).toMatch(/Current screen \(revision b\d+/);
     expect(second).toContain('#n901 link "Item 1"');
-    expect(second).not.toContain('unchanged since revision');
+    expect(second).not.toContain('same as revision');
     // The retry elided the opening screen and cut the newest result's tail, sidebar included.
     expect(loopCalls[2]!.prompt).toContain('[earlier screen elided');
     expect(loopCalls[2]!.prompt).not.toContain('link "Item 1"');
@@ -186,7 +186,7 @@ describe('tool loop context overflow', () => {
     const next = loopCalls[3]!.lastToolResult;
     expect(next).toMatch(/Current screen \(revision b\d+/);
     expect(next).toContain('#n901 link "Item 1"');
-    expect(next).not.toContain('unchanged since revision');
+    expect(next).not.toContain('same as revision');
     const step = steps.all()[0]!;
     expect(step.status).toBe('passed');
     expect(step.metrics?.modelCalls).toBe(3);

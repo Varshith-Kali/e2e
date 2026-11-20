@@ -362,23 +362,24 @@ of sleeping.
 A redacted snapshot of the screen (roles, names, text, states), prior-step
 summaries, and your context; never raw HTML, cookies, headers, environment
 values, or a `Secret`'s value; password fields masked, unless a page
-script hides one from e2e. The first screen of a step arrives whole; later
-action results report what changed, keyed by node ids stable while an
-element exists, or the whole screen when most changed. `observe` returns
-what changed since the last screen, not the whole tree; only the MCP
-`observe` returns the complete tree every time, and only in MCP sessions
-are large unchanged subtrees folded to one line each, naming the node count
-and the revision that last listed them in full, with the ids inside staying
-valid. Pixels arrive through `vision` on a judgment or the act loop's
-`screenshot` and point tools, with secure fields masked. When
-the browser engine's tree capture times out, the model gets a screenshot and
-a warning, a judgment needs `vision: true`, and no control may be inferred
-absent nor old node ids reused. The browser engine's tree shows a frame
-from another site (a hosted card field) as its `iframe` node with none of
-its content, so the agent reaches it only through pixels: script steps
-there with `browser.frameLocator`, and judge it with `vision`. Nothing the
-model returns runs as code or
-selectors: the runner validates and authorizes every tool call first.
+script hides one from e2e. The first
+screen of a step arrives whole; later action results report what changed,
+keyed by node ids stable while an element exists, or the whole screen when
+most changed. `observe` returns what changed since the last screen,
+not the whole tree; the MCP `observe` returns the current listing with no
+folds, within the observation byte limit, and only in MCP sessions are large
+subtrees that match an earlier listing folded to one line each, naming the
+node count and the revision it matches (`same as revision b1`), with the ids
+inside staying valid. Pixels arrive through `vision` on a
+judgment or the act loop's `screenshot` and point tools, with secure fields
+masked. When the browser engine's tree capture times out, the model gets a
+screenshot and a warning, a judgment needs `vision: true`, and no control
+may be inferred absent nor old node ids reused. The browser engine's tree
+shows a frame from another site (a hosted card field) as its `iframe` node
+with none of its content, so the agent reaches it only through pixels:
+script steps there with `browser.frameLocator`, and judge it with `vision`.
+Nothing the model returns runs as code or selectors: the runner validates
+and authorizes every tool call first.
 
 Project tool results and tool or engine errors are secret-redacted before the
 model reads them. Text is redacted before it is cut to the output limit.
@@ -508,10 +509,7 @@ before writing the AI trace.
   https://e2e.com/docs/tools#read-a-nodes-computed-style.
 - `createToolLoopExecutor` keeps the loop and replaces prompt and tool
   vocabulary; spread `createGrammarTools(ctx, { guard })` into its tools and
-  start its `system` with `BASE_RULES` to keep the built-in actions. A
-  `complete_step` sent in the same turn as other calls waits for the calls
-  before it, and is refused when one failed or the last one changed
-  nothing; calls after it don't run.
+  start its `system` with `BASE_RULES` to keep the built-in actions.
 - Any `StepExecutor` (`{ name, version?, cache?, runStep(ctx) }`) goes under
   `executor`; the runner still owns observations, actions, budgets, and the
   report, and `system` or `tools` beside `executor` is `INVALID_CONFIG`.

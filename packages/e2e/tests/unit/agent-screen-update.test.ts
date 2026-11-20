@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelMessage, ToolResultPart } from 'ai';
 import type { ExecutorObservation } from '@e2e-dev/core/lib/agent/executor';
 import { reportsNoEffect, reportsScreenChange, ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
-import { compactScreenHistory } from '@e2e-dev/core/lib/agent/transcript-compaction';
 
 function screen(revision: string, lines: readonly string[], extra: Partial<ExecutorObservation> = {}): ExecutorObservation {
   return {
@@ -22,22 +20,6 @@ const HOME = [
   ' #n5 link "About" href="/about"',
   ' #n6 textbox "Email"',
 ];
-
-/** One tool result carrying a rendered screen as its text. */
-function toolResult(id: string, text: string): ModelMessage {
-  return {
-    role: 'tool',
-    content: [{ type: 'tool-result', toolCallId: id, toolName: 'tap', output: { type: 'text', value: text } }],
-  };
-}
-
-/** The text of a tool message's one text result. */
-function toolText(message: ModelMessage): string {
-  const [part] = message.content as ToolResultPart[];
-  const output = part!.output;
-  if (output.type !== 'text') throw new Error('expected a text tool result');
-  return output.value;
-}
 
 describe('ScreenPresenter', () => {
   describe('says what a wait can count as progress', () => {
@@ -408,7 +390,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12), { path: '/orders' }), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
     expect(text).toContain('Current screen (revision b2, path /orders, 23 nodes):');
-    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
     expect(text).not.toContain('#n3 link "Item 1"');
     expect(text).not.toContain('#n14 link "Item 12"');
     expect(text).toContain(' #n30 heading "Order 42"');
@@ -420,7 +402,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 3)));
     const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 3)), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
     expect(text).toContain(' #n30 heading "Order 42"');
   });
@@ -440,7 +422,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     after.splice(after.indexOf(' #n20 main "Order list"'), 4, ...MAIN_DETAILS);
     const text = presenter.update(screen('b2', after), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).toContain('  #n3 list "Sections" (12 nodes inside, unchanged since revision b1)');
+    expect(text).toContain('  #n3 list "Sections" (12 nodes inside, same as revision b1)');
     expect(text).not.toContain('#n40 link "Section 1"');
     expect(text).toContain('  #n60 link "Settings (2)"');
     expect(text).not.toContain('navigation "Sidebar" (');
@@ -452,7 +434,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     const after = orderScreen(MAIN_DETAILS, 12).filter((line) => !line.includes('#n5 '));
     const text = presenter.update(screen('b2', after), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
   });
 
@@ -464,8 +446,60 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     );
     const text = presenter.update(screen('b2', after), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain('#n8 link "Item 6" [focused]');
+  });
+
+  it('lists a subtree in full when focus left it since the listing it would fold against', () => {
+    const presenter = foldingPresenter();
+    const focused = orderScreen(MAIN_LIST, 12).map((line) =>
+      (line.includes('#n5 ') ? '  #n5 link "Item 3" [focused]' : line),
+    );
+    presenter.initial(screen('b1', focused));
+    const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    expect(text).not.toContain('nodes inside, same as revision');
+    expect(text).toContain(' #n5 link "Item 3"');
+    // b3 may fold against b2, which listed the sidebar with nothing focused.
+    const folded = presenter.update(screen('b3', orderScreen(MAIN_SEARCH, 12)), { lead: 'Tapped #n43.' });
+    expect(folded).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b2)');
+  });
+
+  it('does not fold a subtree holding a focused link whose name holds a bracket', () => {
+    const presenter = foldingPresenter();
+    const bracketSidebar = [
+      ' #n2 navigation "Sidebar"',
+      '  #n3 link "Quantity [kg" [focused]',
+      ...Array.from({ length: 11 }, (_, i) => `  #n${String(i + 4)} link "Item ${String(i + 2)}"`),
+    ];
+    presenter.initial(screen('b1', ['#n1 document "Orders"', ...bracketSidebar, ...MAIN_LIST]));
+    const text = presenter.update(
+      screen('b2', ['#n1 document "Orders"', ...bracketSidebar, ...MAIN_DETAILS]),
+      { lead: 'Tapped #n22.' },
+    );
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    expect(text).not.toContain('nodes inside, same as revision');
+    expect(text).toContain('#n3 link "Quantity [kg" [focused]');
+  });
+
+  it('does not fold a subtree whose link name changed past a bracket', () => {
+    const presenter = foldingPresenter();
+    const before = [
+      ' #n2 navigation "Sidebar"',
+      '  #n3 link "Select [ focused item" [checked]',
+      ...Array.from({ length: 11 }, (_, i) => `  #n${String(i + 4)} link "Item ${String(i + 2)}"`),
+    ];
+    presenter.initial(screen('b1', ['#n1 document "Orders"', ...before, ...MAIN_LIST]));
+    const after = before.map((line) =>
+      (line.includes('#n3 ') ? '  #n3 link "Select [ item" [checked]' : line),
+    );
+    const text = presenter.update(
+      screen('b2', ['#n1 document "Orders"', ...after, ...MAIN_DETAILS]),
+      { lead: 'Tapped #n22.' },
+    );
+    expect(text).toContain('The screen changed substantially since revision b1.');
+    expect(text).not.toContain('nodes inside, same as revision');
+    expect(text).toContain('#n3 link "Select [ item" [checked]');
   });
 
   it('does not fold on a truncated listing, whose cut nodes are unknown', () => {
@@ -477,7 +511,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     const after = [...orderScreen(MAIN_DETAILS, 12), ...extra];
     const text = presenter.update(screen('b2', after, { truncated: true }), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
   });
 
@@ -498,7 +532,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     );
     expect(text).toContain('The screen changed substantially since revision b1.');
     // The fold covers only the eleven links before the marker.
-    expect(text).toContain(' #n2 navigation "Sidebar" (11 nodes inside, unchanged since revision b1)');
+    expect(text).toContain(' #n2 navigation "Sidebar" (11 nodes inside, same as revision b1)');
     expect(text).not.toContain('#n3 link "Item 1"');
     // The marker and the link past it are still listed in full.
     expect(text).toContain('  [End of visible items]');
@@ -509,7 +543,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     const presenter = foldingPresenter();
     const text = presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     expect(text).toContain('Current screen (revision b1, 18 nodes):');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
     expect(text).toContain(' #n14 link "Item 12"');
   });
@@ -526,19 +560,19 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     expect(diff).not.toContain('Current screen');
     const text = presenter.update(screen('b3', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b2.');
-    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
-    expect(text).not.toContain('unchanged since revision b2');
+    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
+    expect(text).not.toContain('same as revision b2');
   });
 
   it('names the original revision when the previous screen itself folded the subtree', () => {
     const presenter = foldingPresenter();
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const first = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
-    expect(first).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(first).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
     const second = presenter.update(screen('b3', orderScreen(MAIN_SEARCH, 12)), { lead: 'Tapped #n43.' });
     expect(second).toContain('The screen changed substantially since revision b2.');
-    expect(second).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
-    expect(second).not.toContain('unchanged since revision b2');
+    expect(second).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
+    expect(second).not.toContain('same as revision b2');
   });
 
   it('lists a changed subtree in full again, then folds it against that listing', () => {
@@ -554,11 +588,11 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
       lines.map((line) => (line.includes('#n5 ') ? '  #n5 link "Item 3 (new)"' : line));
     const relisted = presenter.update(screen('b3', rename(orderScreen(MAIN_DETAILS, 12))), { lead: 'Tapped #n22.' });
     expect(relisted).toContain('The screen changed substantially since revision b2.');
-    expect(relisted).not.toContain('nodes inside, unchanged since revision');
+    expect(relisted).not.toContain('nodes inside, same as revision');
     expect(relisted).toContain(' #n5 link "Item 3 (new)"');
     const folded = presenter.update(screen('b4', rename(orderScreen(MAIN_SEARCH, 12))), { lead: 'Tapped #n43.' });
-    expect(folded).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b3)');
-    expect(folded).not.toContain('unchanged since revision b1');
+    expect(folded).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b3)');
+    expect(folded).not.toContain('same as revision b1');
   });
 
   it('still folds against the original revision when a change was undone', () => {
@@ -570,7 +604,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     presenter.update(screen('b2', renamed));
     presenter.update(screen('b3', orderScreen(MAIN_LIST, 12)));
     const text = presenter.update(screen('b4', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
-    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
   });
 
   it('folds against the original listing when an intervening change was undone, even though the previous screen differs', () => {
@@ -585,31 +619,24 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     // the screen before it.
     const text = presenter.update(screen('b3', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b2.');
-    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(text).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
   });
 
-  it('a truncated full screen clears the fold record, so the next fallback lists the subtree in full instead of naming an elided screen', () => {
+  it('a truncated full screen clears the fold record, so the next fallback lists the subtree in full', () => {
     const presenter = foldingPresenter();
-    const b1 = presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
+    presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const b2 = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
-    expect(b2).toContain(' #n2 navigation "Sidebar" (12 nodes inside, unchanged since revision b1)');
+    expect(b2).toContain(' #n2 navigation "Sidebar" (12 nodes inside, same as revision b1)');
     // b3 is a truncated full screen: it records nothing and folds nothing.
     const extra = Array.from({ length: 12 }, (_, i) => `  #n${String(i + 60)} button "Extra ${String(i + 1)}"`);
     const b3 = presenter.update(screen('b3', [...orderScreen(MAIN_SEARCH, 12), ...extra], { truncated: true }), { lead: 'Tapped #n43.' });
     expect(b3).toContain('The screen changed substantially since revision b2.');
-    expect(b3).not.toContain('nodes inside, unchanged since revision');
-    // By the time b4 renders, compaction has already elided b1 and b2: the
-    // truncated screen carries no fold, so nothing preserves them.
-    const messages = [b1, b2, b3].map((text, index) => toolResult(`c${String(index)}`, text));
-    const compacted = compactScreenHistory(messages, { keepStaleBytes: 0 });
-    const b1Text = toolText(compacted[0]!);
-    expect(b1Text).toContain('[earlier screen elided');
-    expect(b1Text).not.toContain('#n3 link "Item 1"');
+    expect(b3).not.toContain('nodes inside, same as revision');
     // The record b3 cleared means b4 cannot fold against b1: the sidebar is
-    // listed in full again instead of naming a screen the model no longer holds.
+    // listed in full again.
     const b4 = presenter.update(screen('b4', orderScreen(MAIN_DETAILS, 12)), { lead: 'Tapped #n22.' });
     expect(b4).toContain('The screen changed substantially since revision b3.');
-    expect(b4).not.toContain('nodes inside, unchanged since revision');
+    expect(b4).not.toContain('nodes inside, same as revision');
     expect(b4).toContain(' #n3 link "Item 1"');
     expect(b4).toContain(' #n14 link "Item 12"');
   });
@@ -637,7 +664,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     );
     const text = presenter.update(screen('b4', ['#n1 document "Orders"', ...sidebar(12), ...MAIN_DETAILS, ...renamedExtras]), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b3.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
   });
 
@@ -664,7 +691,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     ];
     const text = presenter.update(screen('b2', [...changedFirst, ...second]), { lead: 'Tapped #n3.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain('#n50 document "Second"');
     expect(text).toContain(' #n60 link "Second 1"');
   });
@@ -676,7 +703,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     presenter.initial(screen('b1', orderScreen(MAIN_LIST, 12)));
     const text = presenter.update(screen('b2', orderScreen(MAIN_DETAILS, 12), { path: '/orders' }), { lead: 'Tapped #n22.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain(' #n3 link "Item 1"');
     expect(text).toContain(' #n14 link "Item 12"');
   });
@@ -699,7 +726,7 @@ describe('ScreenPresenter folds large unchanged subtrees in the full-screen fall
     const after = ['#n1 document "Checkout"', ...main('(new)'), ' #n10 form "Checkout"', '  #n11 group "Shipping"', ...fields('   ').slice(0, 11), '  #n23 textbox "Field 12"'];
     const text = presenter.update(screen('b2', after), { lead: 'Tapped #n40.' });
     expect(text).toContain('The screen changed substantially since revision b1.');
-    expect(text).not.toContain('nodes inside, unchanged since revision');
+    expect(text).not.toContain('nodes inside, same as revision');
     expect(text).toContain('  #n23 textbox "Field 12"');
     expect(text).toContain('  #n11 group "Shipping"');
   });
