@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { engineImportProblems, engineImports, resolveEntryExports, resolveModule, resolveWorkspaceSpecifier, subpathEntryFile, tagExportsAt, type EngineImportCheck, type EngineImportMap, type ImportKind } from './engine-exports.ts';
+import { fileURLToPath } from 'node:url';
+import { engineImportProblems, engineImports, fixtureExportsAt, resolveEntryExports, resolveModule, resolveWorkspaceSpecifier, subpathEntryFile, tagExportsAt, type EngineImportCheck, type EngineImportMap, type ImportKind } from './engine-exports.ts';
 describe('exportedNames and resolveEntryExports', () => {
   it('reads named exports, aliases, declarations, and export-star chains', () => {
     const files = new Map([
@@ -994,5 +996,68 @@ describe('floor export checks with in-memory fixtures', () => {
     assert.equal(exportedAt?.types.has('isKeyModifier'), true);
     assert.equal(exportedAt?.values.has('parseKey'), true);
     assert.equal(exportedAt?.types.has('KeyModifier'), true);
+  });
+});
+
+describe('fixtureExportsAt', () => {
+  const fixture = {
+    package: 'e2e',
+    version: '0.15.0',
+    exports: {
+      engine: { values: ['ConfigurationError', 'rejectUnknownKeys'], types: ['NodeRef'] },
+    },
+  };
+
+  it('reads the export sets of a subpath the fixture lists', () => {
+    const exported = fixtureExportsAt(fixture, 'e2e', '0.15.0', 'engine');
+    assert.notEqual(exported, 'missing');
+    assert.notEqual(exported, undefined);
+    if (exported === undefined || exported === 'missing') return;
+    assert.deepEqual([...exported.values].toSorted(), ['ConfigurationError', 'rejectUnknownKeys']);
+    assert.deepEqual([...exported.types], ['NodeRef']);
+  });
+
+  it('answers missing for a subpath the fixture does not list', () => {
+    assert.equal(fixtureExportsAt(fixture, 'e2e', '0.15.0', 'agent'), 'missing');
+  });
+
+  it('answers undefined for a fixture of another version or package', () => {
+    assert.equal(fixtureExportsAt(fixture, 'e2e', '0.15.1', 'engine'), undefined);
+    assert.equal(fixtureExportsAt(fixture, '@e2e-dev/core', '0.15.0', 'engine'), undefined);
+  });
+
+  it('answers undefined for a malformed fixture', () => {
+    assert.equal(fixtureExportsAt({ package: 'e2e' }, 'e2e', '0.15.0', 'engine'), undefined);
+    assert.equal(
+      fixtureExportsAt({ package: 'e2e', version: '0.15.0', exports: { engine: { values: 'nope', types: [] } } }, 'e2e', '0.15.0', 'engine'),
+      undefined,
+    );
+  });
+
+  it('lists every subpath the published package exports', () => {
+    const raw: unknown = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/e2e@0.15.0.json', import.meta.url)), 'utf8'));
+    assert.ok(typeof raw === 'object' && raw !== null && 'exports' in raw && typeof raw.exports === 'object' && raw.exports !== null);
+    assert.deepEqual(Object.keys(raw.exports as Record<string, unknown>).toSorted(), ['', 'agent', 'engine', 'oauth/chatgpt', 'oauth/copilot', 'oauth/grok']);
+  });
+
+  it('verifies the published e2e@0.15.0 floor: a known present export passes beside the missing one', () => {
+    const raw: unknown = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/e2e@0.15.0.json', import.meta.url)), 'utf8'));
+    const imports: EngineImportMap = new Map([
+      ['engine', new Map<string, ImportKind>([['ConfigurationError', 'value'], ['stepTimeout', 'value']])],
+    ]);
+    const check: EngineImportCheck = {
+      packageName: '@e2e-dev/limrun',
+      packagePath: 'packages/limrun/package.json',
+      sibling: 'e2e',
+      floor: '0.15.0',
+      imports,
+    };
+    const { problems, unverifiable } = engineImportProblems(
+      [check],
+      (sibling, subpath, version) => fixtureExportsAt(raw, sibling, version, subpath),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /imports `stepTimeout` from e2e\/engine, but e2e@0\.15\.0 does not export it/);
+    assert.deepEqual(unverifiable, []);
   });
 });

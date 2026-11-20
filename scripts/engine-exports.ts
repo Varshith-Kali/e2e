@@ -12,9 +12,11 @@
  * kinds come from the parsed declaration: interfaces and type aliases
  * are types only, classes and enums are both, the rest are values.
  *
- * The export set at a version comes from the `e2e@<version>` tag (the
+ * The export set at a version comes from the `<sibling>@<version>` tag (the
  * entry file off the sibling's `package.json` `exports`, `export *`
- * chains followed). A floor with no tag is unverifiable, not a failure.
+ * chains followed). A floor with no tag is unverifiable, not a failure,
+ * unless the check script can verify it against an export fixture
+ * recorded from the published tarball; see `fixtureExportsAt`.
  * A value import needs a value export; a type import is satisfied by
  * either kind, and still needs the name at the floor, since the
  * package's published `.d.ts` names it.
@@ -547,6 +549,37 @@ export function tagExportsAt(
   if (resolved.state === 'missing') return 'missing';
   if (resolved.typesTarget === undefined) return undefined;
   return resolveEntryExports(readFile, entryFileForTypesTarget(resolved.typesTarget, siblingDir), resolveBare);
+}
+
+/** The export fixture for one published sibling version: the export sets of every subpath the published package exports, recorded from its tarball (`scripts/fixtures/<sibling>@<version>.json`). `exports` is closed: a subpath it does not list is one the published package does not export. */
+export interface ExportFixture {
+  readonly package: string;
+  readonly version: string;
+  readonly exports: Readonly<Record<string, { readonly values: readonly string[]; readonly types: readonly string[] }>>;
+}
+
+/** Whether `value` is an array of strings. */
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+/**
+ * The export state of one subpath in a fixture: its export sets when the
+ * fixture lists the subpath, `'missing'` when the fixture is for this
+ * sibling and version but lists no such subpath. Undefined when the
+ * fixture is not an export fixture for this sibling and version, or the
+ * entry is malformed: a fixture that cannot be trusted stays
+ * unverifiable rather than failing the check on bad data.
+ */
+export function fixtureExportsAt(fixture: unknown, sibling: string, version: string, subpath: string): TagExports | undefined {
+  if (!isRecord(fixture)) return undefined;
+  if (fixture.package !== sibling || fixture.version !== version) return undefined;
+  const exports = fixture.exports;
+  if (!isRecord(exports)) return undefined;
+  const entry = exports[subpath];
+  if (entry === undefined) return 'missing';
+  if (!isRecord(entry) || !isStringArray(entry.values) || !isStringArray(entry.types)) return undefined;
+  return { values: new Set(entry.values), types: new Set(entry.types) };
 }
 
 export interface EngineImportCheck {

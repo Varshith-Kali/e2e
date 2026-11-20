@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
 import { getPackages, type Packages } from '@manypkg/get-packages';
-import { collectEngineImports, hasReleaseTag, nextReleaseVersions, workspacePackages } from './check-helpers.ts';
+import { collectEngineImports, hasReleaseTag, loadExportFixture, nextReleaseVersions, workspacePackages } from './check-helpers.ts';
 import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
@@ -207,5 +207,15 @@ describe('nextReleaseVersions', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('loadExportFixture', () => {
+  it('reads the committed e2e@0.15.0 fixture and misses an unfixed version', () => {
+    const fixture = loadExportFixture('e2e', '0.15.0') as { package?: unknown; version?: unknown } | undefined;
+    assert.equal(fixture?.package, 'e2e');
+    assert.equal(fixture?.version, '0.15.0');
+    assert.equal(loadExportFixture('e2e', '9.9.9'), undefined);
+    assert.equal(loadExportFixture('@e2e-dev/core', '0.15.0'), undefined);
   });
 });

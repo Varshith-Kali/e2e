@@ -81,6 +81,15 @@ export function collectEngineImports(packagePath: string, sibling = 'e2e'): Engi
   return imports;
 }
 
+/** The export fixture for `sibling` at `version`, parsed off `scripts/fixtures/<sibling>@<version>.json` in the working tree; undefined when there is no such file, or it does not parse. The caller validates its shape. */
+export function loadExportFixture(sibling: string, version: string): unknown {
+  try {
+    return JSON.parse(readFileSync(join(REPO_ROOT, 'scripts', 'fixtures', `${sibling}@${version}.json`), 'utf8')) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The CHANGELOG.md beside `packagePath`, undefined when it cannot be read. */
 export function readChangelog(packagePath: string): string | undefined {
   try {

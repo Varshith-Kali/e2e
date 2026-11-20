@@ -10,7 +10,9 @@
  * A floor naming the version the sibling's pending changesets will release
  * has no tag yet, so its imports are verified against the working tree,
  * which is that pending release's source, instead of passing on an
- * unverifiable note.
+ * unverifiable note. A published version with no tag at all (e2e@0.15.0)
+ * is verified against the export fixture in `scripts/fixtures`, recorded
+ * from its published tarball.
  *
  * `changeset version --snapshot canary` rewrites those peers to the siblings'
  * exact canary versions; `restore-peer-ranges.ts` puts the ranges back after
@@ -24,8 +26,8 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { collectEngineImports, listTags, nextReleaseVersions, pendingChangesets, readChangelog, showAtTag, workspacePackages } from './check-helpers.ts';
-import { engineImportProblems, tagExportsAt, type EngineImportCheck, type TagExports } from './engine-exports.ts';
+import { collectEngineImports, listTags, loadExportFixture, nextReleaseVersions, pendingChangesets, readChangelog, showAtTag, workspacePackages } from './check-helpers.ts';
+import { engineImportProblems, fixtureExportsAt, tagExportsAt, type EngineImportCheck, type TagExports } from './engine-exports.ts';
 import { peerFloor, peerRangeProblems } from './peer-ranges.ts';
 import { REPO_ROOT, publicPackages, siblingPeers } from './public-packages.ts';
 
@@ -67,6 +69,7 @@ if (listTags('@e2e-dev/core@*').length === 0) {
 // floor, read off the `<sibling>@<floor>` tag.
 const siblingDirs = new Map(packages.map(({ manifest, path }) => [manifest.name, relative(REPO_ROOT, dirname(path))]));
 const exportsCache = new Map<string, TagExports | undefined>();
+const fixtureCache = new Map<string, unknown>();
 
 /** Reads `path` from the working tree, undefined when it cannot be read. */
 function showWorkingTree(path: string): string | undefined {
@@ -89,6 +92,13 @@ const exportsAt = (sibling: string, subpath: string, version: string): TagExport
     // working tree is that pending release's source, so verify against it
     // instead of passing the floor on an unverifiable note.
     resolved = tagExportsAt(showWorkingTree, siblingDir, subpath, siblingDirs);
+  }
+  if (resolved === undefined) {
+    // A published version with no tag cannot be read off git; the export
+    // fixture recorded from its tarball verifies it instead.
+    const fixtureKey = `${sibling}@${version}`;
+    if (!fixtureCache.has(fixtureKey)) fixtureCache.set(fixtureKey, loadExportFixture(sibling, version));
+    resolved = fixtureExportsAt(fixtureCache.get(fixtureKey), sibling, version, subpath);
   }
   exportsCache.set(key, resolved);
   return resolved;

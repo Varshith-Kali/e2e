@@ -780,9 +780,11 @@ trees, on both platforms, without a device.
   `@e2e-dev/core/*` entry the floor version does not export, read off the
   `<sibling>@<version>` tag, or off the working tree when the floor names the
   version the sibling's pending changesets will release, since that tag does
-  not exist yet (a namespace import is reported as an unverifiable note
-  instead, since its names cannot be enumerated, unless the floor version does
-  not export that subpath at all, in which case it fails). Rule (c) covers
+  not exist yet, or off the export fixture in `scripts/fixtures` when the
+  version was published with no tag at all (a namespace import is reported
+  as an unverifiable note instead, since its names cannot be enumerated,
+  unless the floor version does not export that subpath at all, in which
+  case it fails). Rule (c) covers
   both siblings: an engine's imports from `@e2e-dev/core/engine` are checked
   against its declared core peer floor the same way. Narrow or exact, every runner
   minor (exact: every patch too)
