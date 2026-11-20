@@ -802,6 +802,22 @@ describe('engineImportProblems', () => {
     assert.match(problems[0]!, /imports from e2e\/missing, but e2e@0\.23\.0 does not export that subpath/);
   });
 
+  it('fails a core import the core floor does not export', () => {
+    const coreCheck: EngineImportCheck = {
+      packageName: '@e2e-dev/web',
+      packagePath: 'packages/web/package.json',
+      sibling: '@e2e-dev/core',
+      floor: '0.24.0',
+      imports: named([
+        ['EngineError', 'value'],
+        ['newContractField', 'value'],
+      ]),
+    };
+    const { problems } = engineImportProblems([coreCheck], () => exported(['EngineError']));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /imports `newContractField` from @e2e-dev\/core\/engine, but @e2e-dev\/core@0\.24\.0 does not export it/);
+  });
+
   it('passes a side-effect import from a subpath the floor tag exports', () => {
     const { problems, unverifiable, verified } = engineImportProblems(
       [check('0.23.0', new Map([['engine', new Map<string, ImportKind>()]]))],

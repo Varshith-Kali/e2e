@@ -775,15 +775,16 @@ trees, on both platforms, without a device.
   sibling released, or the sibling's version in the same release, and a raise
   past a runner minor the previous range accepted needs a `**Breaking:**`
   minor changeset (`scripts/check-changeset-bumps.ts`); a new `e2e/engine`
-  import counts as a raise, so the check also fails any named import from `e2e`
-  or an `e2e/*` entry the floor version does not export, read off the
-  `e2e@<version>` tag, or off the working tree when the floor names the
+  or `@e2e-dev/core/engine` import counts as a raise, so the check also fails
+  any named import from `e2e`, an `e2e/*` entry, `@e2e-dev/core`, or an
+  `@e2e-dev/core/*` entry the floor version does not export, read off the
+  `<sibling>@<version>` tag, or off the working tree when the floor names the
   version the sibling's pending changesets will release, since that tag does
   not exist yet (a namespace import is reported as an unverifiable note
   instead, since its names cannot be enumerated, unless the floor version does
   not export that subpath at all, in which case it fails). Rule (c) covers
-  `e2e` and `e2e/*` only: imports from `@e2e-dev/core/engine` are not checked
-  against the core floor. Narrow or exact, every runner
+  both siblings: an engine's imports from `@e2e-dev/core/engine` are checked
+  against its declared core peer floor the same way. Narrow or exact, every runner
   minor (exact: every patch too)
   falls out of range, and changesets 3 then patch-bumps each engine and
   rewrites its pin, never a major (`determineDependents` in

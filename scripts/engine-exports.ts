@@ -1,8 +1,9 @@
 /**
  * Rule (c): an engine that starts importing a new `e2e/engine` export
  * counts as raising the floor. This module verifies it: every import a
- * package takes from `e2e` or an `e2e/*` entry must be exported by `e2e`
- * at the version the package's peer floor names, including namespace and
+ * package takes from a sibling (`e2e`, or `@e2e-dev/core` for the engine
+ * contract) or one of its subpaths must be exported by that sibling at
+ * the version the package's peer floor names, including namespace and
  * side-effect imports, which record the subpath even though they name no
  * exports, and default imports, which record the `default` binding.
  *
@@ -28,10 +29,10 @@ export type ImportKind = 'value' | 'type';
 /** The named imports from `e2e` and its subpaths in one source file, keyed by subpath (`''` is the bare `e2e` entry), each name with its kind. A value import of a name subsumes a type import of the same name. */
 export type EngineImportMap = ReadonlyMap<string, ReadonlyMap<string, ImportKind>>;
 
-/** The subpath of an `e2e` specifier (`''` for the bare entry), undefined for any other package. */
-function e2eSubpath(specifier: string): string | undefined {
-  if (specifier === 'e2e') return '';
-  if (specifier.startsWith('e2e/')) return specifier.slice('e2e/'.length);
+/** The subpath of a `sibling` specifier (`''` for the bare entry), undefined for any other package. */
+function siblingSubpath(specifier: string, sibling: string): string | undefined {
+  if (specifier === sibling) return '';
+  if (specifier.startsWith(`${sibling}/`)) return specifier.slice(sibling.length + 1);
   return undefined;
 }
 
@@ -126,15 +127,15 @@ function walkAst(value: unknown, visit: (node: AstNode) => void): void {
   for (const child of Object.values(value)) walkAst(child, visit);
 }
 
-/** The named imports from `e2e` and its subpaths in one source file, keyed by subpath (`''` is the bare `e2e` entry). A namespace import is recorded as the name `'*'`, which the check cannot enumerate; a side-effect import records the subpath with no names, so the check still verifies the subpath exists at the floor; a default import records the name `default`, so a floor without one fails the check. */
-export function engineImports(source: string): EngineImportMap {
+/** The named imports from the sibling and its subpaths in one source file, keyed by subpath (`''` is the bare entry). A namespace import is recorded as the name `'*'`, which the check cannot enumerate; a side-effect import records the subpath with no names, so the check still verifies the subpath exists at the floor; a default import records the name `default`, so a floor without one fails the check. `sibling` defaults to `e2e`; pass `@e2e-dev/core` for the engine contract. */
+export function engineImports(source: string, sibling = 'e2e'): EngineImportMap {
   const found = new Map<string, Map<string, ImportKind>>();
   const add = (subpath: string, names: readonly (readonly [string, ImportKind])[]): void => {
     mergeInto(found, subpath, names);
   };
   const parsed = parseModule(source);
   for (const statement of parsed.module.staticImports) {
-    const subpath = e2eSubpath(statement.moduleRequest.value);
+    const subpath = siblingSubpath(statement.moduleRequest.value, sibling);
     if (subpath === undefined) continue;
     // Record the subpath even when the import names nothing: a
     // side-effect import (`import 'e2e/engine'`) has no entries, but it
@@ -148,14 +149,14 @@ export function engineImports(source: string): EngineImportMap {
       }
     }
   }
-  // A re-export from an `e2e` entry is an import too: the package depends
+  // A re-export from a sibling entry is an import too: the package depends
   // on the export existing at its floor. `export * from` cannot be
   // enumerated, so it is recorded as a namespace import.
   for (const statement of parsed.module.staticExports) {
     for (const entry of statement.entries) {
       const moduleRequest = entry.moduleRequest?.value;
       if (moduleRequest === undefined) continue;
-      const subpath = e2eSubpath(moduleRequest);
+      const subpath = siblingSubpath(moduleRequest, sibling);
       if (subpath === undefined) continue;
       add(subpath, []);
       if (entry.importName.kind === 'AllButDefault') add(subpath, [['*', 'value']]);
@@ -176,7 +177,7 @@ export function engineImports(source: string): EngineImportMap {
     if (node.type === 'VariableDeclarator') {
       const sourceSpecifier = importCallSource(node.init);
       if (sourceSpecifier === undefined) return;
-      const subpath = e2eSubpath(sourceSpecifier);
+      const subpath = siblingSubpath(sourceSpecifier, sibling);
       if (subpath === undefined) return;
       const call = importCall(node.init);
       if (call !== undefined) handled.add(call);
@@ -194,7 +195,7 @@ export function engineImports(source: string): EngineImportMap {
     if (node.type === 'TSImportType') {
       const sourceNode = node.source;
       if (!isRecord(sourceNode) || sourceNode.type !== 'Literal' || typeof sourceNode.value !== 'string') return;
-      const subpath = e2eSubpath(sourceNode.value);
+      const subpath = siblingSubpath(sourceNode.value, sibling);
       if (subpath === undefined) return;
       add(subpath, []);
       const first = firstQualifierName(node.qualifier);
@@ -204,7 +205,7 @@ export function engineImports(source: string): EngineImportMap {
     if (node.type !== 'ImportExpression' || handled.has(node)) return;
     const sourceSpecifier = importCallSource(node);
     if (sourceSpecifier === undefined) return;
-    const subpath = e2eSubpath(sourceSpecifier);
+    const subpath = siblingSubpath(sourceSpecifier, sibling);
     if (subpath === undefined) return;
     add(subpath, [['*', 'value']]);
   });

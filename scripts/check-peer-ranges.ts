@@ -3,8 +3,9 @@
  * on `e2e`, an integration's on an engine) is anything but
  * `>=<major.minor.patch> <major+1>`, or names a version the sibling never
  * released (no `## <version>` in its CHANGELOG.md, and no pending changeset
- * releasing it), or imports an `e2e/*` export the floor version does not
- * have (rule (c): a new `e2e/engine` import counts as raising the floor).
+ * releasing it), or imports an `e2e/*` or `@e2e-dev/core/*` export the floor
+ * version does not have (rule (c): a new `e2e/engine` or
+ * `@e2e-dev/core/engine` import counts as raising the floor).
  *
  * A floor naming the version the sibling's pending changesets will release
  * has no tag yet, so its imports are verified against the working tree,
@@ -54,8 +55,16 @@ if (listTags('e2e@*').length === 0) {
   problems.push('no e2e@* tags exist; no e2e import can be verified against its floor version, so the check fails instead of quietly passing (fetch the tags: git fetch --tags)');
 }
 
-// Rule (c): every named import from `e2e/*` must be exported by `e2e` at
-// the package's peer floor, read off the `e2e@<floor>` tag.
+// With no `@e2e-dev/core@*` tags at all there is no tag record to verify any
+// core import against, so rule (c) would quietly pass every package. Fail
+// loudly instead: a tagless checkout must fetch the tags.
+if (listTags('@e2e-dev/core@*').length === 0) {
+  problems.push('no @e2e-dev/core@* tags exist; no core import can be verified against its floor version, so the check fails instead of quietly passing (fetch the tags: git fetch --tags)');
+}
+
+// Rule (c): every named import from a sibling (`e2e/*`,
+// `@e2e-dev/core/*`) must be exported by that sibling at the package's peer
+// floor, read off the `<sibling>@<floor>` tag.
 const siblingDirs = new Map(packages.map(({ manifest, path }) => [manifest.name, relative(REPO_ROOT, dirname(path))]));
 const exportsCache = new Map<string, TagExports | undefined>();
 
@@ -85,24 +94,30 @@ const exportsAt = (sibling: string, subpath: string, version: string): TagExport
   return resolved;
 };
 
-const checks: EngineImportCheck[] = [];
-for (const { path, manifest } of packages) {
-  const range = manifest.peerDependencies?.['e2e'];
-  if (range === undefined) continue;
-  const floor = peerFloor(range);
-  if (floor === undefined) continue;
-  const imports = collectEngineImports(path);
-  if (imports.size === 0) continue;
-  checks.push({ packageName: manifest.name, packagePath: relative(REPO_ROOT, path), sibling: 'e2e', floor, imports });
+/** The import checks for every package peering on `sibling`: its imports from that sibling, verified against its peer floor. */
+function importChecks(sibling: string): EngineImportCheck[] {
+  const checks: EngineImportCheck[] = [];
+  for (const { path, manifest } of packages) {
+    const range = manifest.peerDependencies?.[sibling];
+    if (range === undefined) continue;
+    const floor = peerFloor(range);
+    if (floor === undefined) continue;
+    const imports = collectEngineImports(path, sibling);
+    if (imports.size === 0) continue;
+    checks.push({ packageName: manifest.name, packagePath: relative(REPO_ROOT, path), sibling, floor, imports });
+  }
+  return checks;
 }
-const { problems: importProblems, unverifiable, verified } = engineImportProblems(checks, exportsAt);
-problems.push(...importProblems);
+const e2eResult = engineImportProblems(importChecks('e2e'), exportsAt);
+const coreResult = engineImportProblems(importChecks('@e2e-dev/core'), exportsAt);
+problems.push(...e2eResult.problems, ...coreResult.problems);
+const unverifiable = [...e2eResult.unverifiable, ...coreResult.unverifiable];
 
 if (problems.length > 0) {
   process.stderr.write(`${problems.join('\n')}\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write(`peer ranges: ${checked.toSorted().join(', ')} as wide ranges on released versions; ${verified} packages' e2e imports verified against their floors\n`);
+  process.stdout.write(`peer ranges: ${checked.toSorted().join(', ')} as wide ranges on released versions; ${e2eResult.verified} packages' e2e imports and ${coreResult.verified} packages' core imports verified against their floors\n`);
 }
 for (const note of unverifiable) {
   process.stdout.write(`note: ${note}\n`);

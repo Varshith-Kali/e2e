@@ -29,6 +29,25 @@ describe('collectEngineImports', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it('collects imports for the sibling it is given, not e2e', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-check-helpers-'));
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'pkg' }));
+      writeFileSync(
+        join(dir, 'src', 'a.ts'),
+        `import { EngineError } from '@e2e-dev/core/engine';\nimport { stepTimeout } from 'e2e/engine';\n`,
+      );
+      const core = collectEngineImports(join(dir, 'package.json'), '@e2e-dev/core');
+      assert.deepEqual(core.get('engine'), new Map([['EngineError', 'value']]));
+      assert.equal(core.size, 1);
+      const e2e = collectEngineImports(join(dir, 'package.json'));
+      assert.deepEqual(e2e.get('engine'), new Map([['stepTimeout', 'value']]));
+      assert.equal(e2e.size, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('hasReleaseTag', () => {

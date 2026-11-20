@@ -66,12 +66,12 @@ function sourceFiles(dirPath: string): string[] {
   return out;
 }
 
-/** The named `e2e` imports in a package's `src/` tree, keyed by subpath. `packagePath` is the path to the package's `package.json`. */
-export function collectEngineImports(packagePath: string): EngineImportMap {
+/** The named `e2e` or `@e2e-dev/core` imports in a package's `src/` tree, keyed by subpath. `packagePath` is the path to the package's `package.json`. `sibling` defaults to `e2e`; pass `@e2e-dev/core` for the engine contract. */
+export function collectEngineImports(packagePath: string, sibling = 'e2e'): EngineImportMap {
   const imports = new Map<string, Map<string, ImportKind>>();
   for (const file of sourceFiles(join(dirname(packagePath), 'src'))) {
     try {
-      addEngineImports(imports, engineImports(readFileSync(file, 'utf8')));
+      addEngineImports(imports, engineImports(readFileSync(file, 'utf8'), sibling));
     } catch (error) {
       // A file that fails to parse names no file in the error from
       // engineImports, so say which one it was.

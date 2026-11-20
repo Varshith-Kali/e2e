@@ -156,6 +156,31 @@ describe('engineImports', () => {
   });
 });
 
+describe('engineImports with a sibling', () => {
+  it('reads imports from @e2e-dev/core/engine when the sibling is core', () => {
+    const imports = engineImports(
+      `import { EngineError, type NodeRef } from '@e2e-dev/core/engine';\nimport { stepTimeout } from 'e2e/engine';\n`,
+      '@e2e-dev/core',
+    );
+    assert.deepEqual(
+      imports.get('engine'),
+      new Map<string, ImportKind>([
+        ['EngineError', 'value'],
+        ['NodeRef', 'type'],
+      ]),
+    );
+    assert.equal(imports.size, 1);
+  });
+
+  it('still reads only e2e imports by default', () => {
+    const imports = engineImports(
+      `import { EngineError } from '@e2e-dev/core/engine';\nimport { stepTimeout } from 'e2e/engine';\n`,
+    );
+    assert.deepEqual(imports.get('engine'), new Map<string, ImportKind>([['stepTimeout', 'value']]));
+    assert.equal(imports.size, 1);
+  });
+});
+
 describe('addEngineImports', () => {
   it('keeps a value import over a type import in either order', () => {
     const typeFirst = new Map<string, Map<string, ImportKind>>();
