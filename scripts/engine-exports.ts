@@ -551,25 +551,22 @@ export function tagExportsAt(
   return resolveEntryExports(readFile, entryFileForTypesTarget(resolved.typesTarget, siblingDir), resolveBare);
 }
 
-/** The export fixture for one published sibling version: the export sets of every subpath the published package exports, recorded from its tarball (`scripts/fixtures/<sibling>@<version>.json`). `exports` is closed: a subpath it does not list is one the published package does not export. */
-export interface ExportFixture {
-  readonly package: string;
-  readonly version: string;
-  readonly exports: Readonly<Record<string, { readonly values: readonly string[]; readonly types: readonly string[] }>>;
-}
-
 /** Whether `value` is an array of strings. */
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 /**
- * The export state of one subpath in a fixture: its export sets when the
- * fixture lists the subpath, `'missing'` when the fixture is for this
- * sibling and version but lists no such subpath. Undefined when the
- * fixture is not an export fixture for this sibling and version, or the
- * entry is malformed: a fixture that cannot be trusted stays
- * unverifiable rather than failing the check on bad data.
+ * The export state of one subpath in an export fixture: the export sets of
+ * every subpath the published package exports, recorded from its tarball
+ * (`scripts/fixtures/<sibling>@<version>.json`). Its `exports` map is
+ * closed: a subpath it does not list is one the published package does not
+ * export. Returns the subpath's export sets when the fixture lists it,
+ * `'missing'` when the fixture is for this sibling and version but lists
+ * no such subpath. Undefined when the fixture is not an export fixture
+ * for this sibling and version, or the entry is malformed: a fixture that
+ * cannot be trusted stays unverifiable rather than failing the check on
+ * bad data.
  */
 export function fixtureExportsAt(fixture: unknown, sibling: string, version: string, subpath: string): TagExports | undefined {
   if (!isRecord(fixture)) return undefined;
