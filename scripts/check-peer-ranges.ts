@@ -7,10 +7,11 @@
  * version does not have (rule (c): a new `e2e/engine` or
  * `@e2e-dev/core/engine` import counts as raising the floor).
  *
- * A floor naming the version the sibling's pending changesets will release
- * has no tag yet, so its imports are verified against the working tree,
- * which is that pending release's source, instead of passing on an
- * unverifiable note. A published version with no tag at all (e2e@0.15.0)
+ * A floor naming the version the sibling's pending changesets will release,
+ * or the version `changeset version` just wrote into the sibling's manifest
+ * with no tag yet, has no tag to read, so its imports are verified against
+ * the working tree, which is that release's source, instead of passing on
+ * an unverifiable note. A published version with no tag at all (e2e@0.15.0)
  * is verified against the export fixture in `scripts/fixtures`, recorded
  * from its published tarball.
  *
@@ -26,7 +27,7 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { collectEngineImports, listTags, loadExportFixture, nextReleaseVersions, pendingChangesets, readChangelog, showAtTag, workspacePackages } from './check-helpers.ts';
+import { collectEngineImports, hasReleaseTag, isJustVersionedFloor, listTags, loadExportFixture, nextReleaseVersions, pendingChangesets, readChangelog, showAtTag, workspacePackages } from './check-helpers.ts';
 import { engineImportProblems, fixtureExportsAt, tagExportsAt, type EngineImportCheck, type TagExports } from './engine-exports.ts';
 import { peerFloor, peerRangeProblems } from './peer-ranges.ts';
 import { REPO_ROOT, publicPackages, siblingPeers } from './public-packages.ts';
@@ -68,6 +69,7 @@ if (listTags('@e2e-dev/core@*').length === 0) {
 // `@e2e-dev/core/*`) must be exported by that sibling at the package's peer
 // floor, read off the `<sibling>@<floor>` tag.
 const siblingDirs = new Map(packages.map(({ manifest, path }) => [manifest.name, relative(REPO_ROOT, dirname(path))]));
+const siblingVersions = new Map(packages.map(({ manifest }) => [manifest.name, manifest.version]));
 const exportsCache = new Map<string, TagExports | undefined>();
 const fixtureCache = new Map<string, unknown>();
 
@@ -86,11 +88,12 @@ const exportsAt = (sibling: string, subpath: string, version: string): TagExport
   const siblingDir = siblingDirs.get(sibling);
   const tagRead = (path: string): string | undefined => showAtTag(`${sibling}@${version}`, path);
   let resolved = siblingDir === undefined ? undefined : tagExportsAt(tagRead, siblingDir, subpath, siblingDirs);
-  if (resolved === undefined && siblingDir !== undefined && nextVersions.get(sibling) === version) {
+  if (resolved === undefined && siblingDir !== undefined && (nextVersions.get(sibling) === version || isJustVersionedFloor(siblingVersions.get(sibling), version, hasReleaseTag(sibling, version)))) {
     // A floor naming the version the sibling's pending changesets will
-    // release has no tag yet, so the tag lookup cannot verify it; the
-    // working tree is that pending release's source, so verify against it
-    // instead of passing the floor on an unverifiable note.
+    // release, or the version `changeset version` just wrote into the
+    // sibling's manifest with no tag yet, has no tag to read; the working
+    // tree is that release's source, so verify against it instead of
+    // passing the floor on an unverifiable note.
     resolved = tagExportsAt(showWorkingTree, siblingDir, subpath, siblingDirs);
   }
   if (resolved === undefined) {

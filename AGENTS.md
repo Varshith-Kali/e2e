@@ -779,8 +779,9 @@ trees, on both platforms, without a device.
   any named import from `e2e`, an `e2e/*` entry, `@e2e-dev/core`, or an
   `@e2e-dev/core/*` entry the floor version does not export, read off the
   `<sibling>@<version>` tag, or off the working tree when the floor names the
-  version the sibling's pending changesets will release, since that tag does
-  not exist yet, or off the export fixture in `scripts/fixtures` when the
+  version the sibling's pending changesets will release, or the version
+  `changeset version` just wrote into the sibling's manifest, since that tag
+  does not exist yet, or off the export fixture in `scripts/fixtures` when the
   version was published with no tag at all (a namespace import is reported
   as an unverifiable note instead, since its names cannot be enumerated,
   unless the floor version does not export that subpath at all, in which

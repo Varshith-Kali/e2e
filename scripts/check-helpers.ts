@@ -42,6 +42,18 @@ export function hasReleaseTag(name: string, version: string, cwd: string = REPO_
   return listTags(`${name}@${version}`, cwd).length > 0;
 }
 
+/**
+ * Whether a floor naming `floor` should be verified against the working
+ * tree even though no pending changeset releases it: the sibling's current
+ * version is that floor (`changeset version` has consumed the entry) and
+ * its release tag does not exist yet. Between versioning and publish the
+ * working tree is the release's source, so it verifies the floor the tag
+ * cannot yet.
+ */
+export function isJustVersionedFloor(siblingVersion: string | undefined, floor: string, hasTag: boolean): boolean {
+  return siblingVersion !== undefined && siblingVersion === floor && !hasTag;
+}
+
 /** The TypeScript files under `dirPath`, recursively; unreadable entries are skipped. */
 function sourceFiles(dirPath: string): string[] {
   const out: string[] = [];

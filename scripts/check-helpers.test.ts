@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseChangesetFile } from '@changesets/parse';
 import { getPackages, type Packages } from '@manypkg/get-packages';
-import { collectEngineImports, hasReleaseTag, loadExportFixture, nextReleaseVersions, workspacePackages } from './check-helpers.ts';
+import { collectEngineImports, hasReleaseTag, isJustVersionedFloor, loadExportFixture, nextReleaseVersions, workspacePackages } from './check-helpers.ts';
 import { REPO_ROOT } from './public-packages.ts';
 
 describe('collectEngineImports', () => {
@@ -217,5 +217,14 @@ describe('loadExportFixture', () => {
     assert.equal(fixture?.version, '0.15.0');
     assert.equal(loadExportFixture('e2e', '9.9.9'), undefined);
     assert.equal(loadExportFixture('@e2e-dev/core', '0.15.0'), undefined);
+  });
+});
+
+describe('isJustVersionedFloor', () => {
+  it('is true only when the sibling version is the floor and its tag does not exist yet', () => {
+    assert.equal(isJustVersionedFloor('0.24.1', '0.24.1', false), true);
+    assert.equal(isJustVersionedFloor('0.24.1', '0.24.1', true), false);
+    assert.equal(isJustVersionedFloor('0.24.0', '0.24.1', false), false);
+    assert.equal(isJustVersionedFloor(undefined, '0.24.1', false), false);
   });
 });
