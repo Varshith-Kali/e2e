@@ -137,6 +137,7 @@ test('shows the home screen', async ({ agent, app, screen }) => {
 | `device.launchApp({ launchArgs, permissions })` | `device.openApp(id, { relaunch: true, launchArguments, permissions })` |
 | `device.resetAppState()` | `app.clearState()` |
 | `device.launchApp({ delete: true })` | `device.installApp(path, { reinstall: true })` の後に `app.open()` |
+| `device.uninstallApp()` | `device.uninstallApp(id)`。ID を省略すると固定したアプリ |
 | `device.launchApp({ url })`, `device.openURL({ url })` | `device.openLink(url)` |
 | `device.terminateApp()`, `sendToHome()`, `pressBack()` | `device.closeApp()`、`home()`、`back()` |
 | `device.setLocation(lat, lon)`, `setOrientation('landscape')` | `device.setLocation({ latitude, longitude })`、`setOrientation('landscape-left')` |
@@ -163,7 +164,7 @@ test('shows the home screen', async ({ agent, app, screen }) => {
 | `.setDatePickerDate()`, `.setColumnToValue()`, `.adjustSliderToPosition()` | `agent.act` のゴール、またはスライダー上の `screen.swipe({ from, to })` |
 | フォームコントロール以外の `.toHaveValue(v)` | `expect(device.locator('id=x value="v"')).toBeVisible()` |
 | `health`、`homekit`、`speech`、`faceid`、`userTracking` の `permissions`、値 `always`、`inuse`、`limited` | プロンプトのボタンをタップするか、`device.alert('accept')` |
-| `device.sendUserNotification()`, `device.uninstallApp()`, `.pinch()` | [`unstable_raw`](/reference/mobile#unstable_raw) の `client.apps.push()`、`client.apps.uninstall()`、`client.interactions.pinch()` |
+| `device.sendUserNotification()`, `.pinch()` | [`unstable_raw`](/reference/mobile#unstable_raw) の `client.apps.push()`、`client.interactions.pinch()` |
 | `launchApp({ languageAndLocale })` | iOS では `app.launchArguments: ['-AppleLanguages', '(fr)', '-AppleLocale', 'fr_FR']`。[別の言語でアプリを実行する](/mobile#run-the-app-in-another-language)を参照 |
 | Jest の `globalSetup`、`globalTeardown` | 実行前に依存サービスを起動 |
 | `device.reverseTcpPort()` | CI ステップで `adb reverse` |

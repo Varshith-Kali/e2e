@@ -223,6 +223,8 @@ const { app } = await device.installApp('./build/MyApp.app', { reinstall: true }
 await device.openApp(app);
 ```
 
+`device.uninstallApp(id)` はアプリを削除し、`device.isAppInstalled(id)` はアプリがあるかを確かめます。ID を省略すると、どちらも固定したアプリを対象にします。
+
 `device.openApp` はバンドル ID、パッケージ、表示名を受け取ります。リンクは受け取りません。
 `device.openLink` は、固定されたアプリ、またはオプションの `app` に、ディープリンクや Web リンクを開きます。
 マジックリンクによるサインインや、ディープリンクのルートに使えます。

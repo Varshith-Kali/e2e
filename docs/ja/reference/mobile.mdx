@@ -382,6 +382,8 @@ test('offline banner', { platforms: ['android'] }, async ({ app, device, screen 
 | [`setBiometrics`](#setbiometrics) | `Promise<void>` |
 | [`enrollBiometrics`](#enrollbiometrics) | `Promise<void>` |
 | [`installApp`](#installapp) | `Promise<InstalledApp>` |
+| [`uninstallApp`](#uninstallapp) | `Promise<boolean>` |
+| [`isAppInstalled`](#isappinstalled) | `Promise<boolean>` |
 | [`openApp`](#openapp) | `Promise<void>` |
 | [`openLink`](#openlink) | `Promise<void>` |
 | [`closeApp`](#closeapp) | `Promise<void>` |
@@ -661,6 +663,52 @@ await device.openApp(app);
 | --- | --- |
 | `APP_NOT_OPEN` | パスを渡さず、ターゲットにも `app.appPath` がない場合。または `reinstall: true` で `app` を渡さず、対象アプリも決まっていない場合（`app.bundleId` がなく、ビルドもまだ未インストール）。 |
 | `ENGINE_FAILURE` | agent-device が ID を報告せず、`app` も渡されていない場合。ファイルパスを ID として返す代わりに失敗します。[トラブルシューティング](/mobile#troubleshooting)を参照してください。 |
+
+#### `uninstallApp`
+
+```ts
+/**
+ * Removes an app, by bundle id or package, from the device; without one,
+ * the pinned app. Resolves to whether it was installed, so removing an app
+ * id that is not there passes. Without `app.bundleId` on the target,
+ * removing the build `installApp` pinned unpins it: `app.open()` then
+ * needs another install.
+ */
+uninstallApp(app?: string): Promise<boolean>;
+```
+
+```ts
+expect(await device.uninstallApp()).toBe(true);
+expect(await device.isAppInstalled('com.example.app')).toBe(false);
+await device.installApp(); // a fresh install, for a first-launch flow
+```
+
+- 画面に表示中のアプリを削除すると、デバイスはホーム画面に戻り、それ以前に解決したロケーターは何も指さなくなります。テストを続けるには `device.installApp()` で再インストールしてから `device.openApp(app)` で開いてください。
+- デバイスはワーカーの後続のテストでも使われ、削除した状態もそのまま残ります。テストが終わる前に `finally` ブロックでアプリを再インストールしてください。そうしないと、そのワーカーの後続のテストはすべて `app.open()` で失敗します。
+
+| エラー | 発生条件 |
+| --- | --- |
+| `APP_NOT_OPEN` | `app` を渡さず、対象アプリも決まっていない場合（`app.bundleId` がなく、ビルドもまだ未インストール）。 |
+
+#### `isAppInstalled`
+
+```ts
+/**
+ * Whether an app, by bundle id or package, is on the device, system apps
+ * included (Android: launchable apps only); without one, the pinned app.
+ */
+isAppInstalled(app?: string): Promise<boolean>;
+```
+
+```ts
+expect(await device.isAppInstalled('com.example.companion')).toBe(true);
+```
+
+- デバイスが一覧に出すアプリの表示名でも一致します。
+
+| エラー | 発生条件 |
+| --- | --- |
+| `APP_NOT_OPEN` | `app` を渡さず、対象アプリも決まっていない場合。 |
 
 #### `openApp`
 

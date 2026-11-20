@@ -446,6 +446,8 @@ test('offline banner', { platforms: ['android'] }, async ({ app, device, screen 
 | [`setBiometrics`](#setbiometrics) | `Promise<void>` |
 | [`enrollBiometrics`](#enrollbiometrics) | `Promise<void>` |
 | [`installApp`](#installapp) | `Promise<InstalledApp>` |
+| [`uninstallApp`](#uninstallapp) | `Promise<boolean>` |
+| [`isAppInstalled`](#isappinstalled) | `Promise<boolean>` |
 | [`openApp`](#openapp) | `Promise<void>` |
 | [`openLink`](#openlink) | `Promise<void>` |
 | [`closeApp`](#closeapp) | `Promise<void>` |
@@ -741,6 +743,56 @@ await device.openApp(app);
 | --- | --- |
 | `APP_NOT_OPEN` | No path was passed and the target has no `app.appPath`; or `reinstall: true` with no `app` passed and no app pinned (no `app.bundleId`, build not installed yet). |
 | `ENGINE_FAILURE` | agent-device reported no id and no `app` was passed, instead of a file path posing as an id. See [Troubleshooting](/mobile#troubleshooting). |
+
+#### `uninstallApp`
+
+```ts
+/**
+ * Removes an app, by bundle id or package, from the device; without one,
+ * the pinned app. Resolves to whether it was installed, so removing an app
+ * id that is not there passes. Without `app.bundleId` on the target,
+ * removing the build `installApp` pinned unpins it: `app.open()` then
+ * needs another install.
+ */
+uninstallApp(app?: string): Promise<boolean>;
+```
+
+```ts
+expect(await device.uninstallApp()).toBe(true);
+expect(await device.isAppInstalled('com.example.app')).toBe(false);
+await device.installApp(); // a fresh install, for a first-launch flow
+```
+
+- Removing the app on screen leaves the device on its home screen, and
+  locators resolved before point at nothing. Install it again with
+  `device.installApp()`, then `device.openApp(app)`, to keep testing it.
+- The device keeps the removal for the tests that run on it later. Reinstall
+  the app before the test ends, in a `finally` block, or any later test on
+  that device that opens it fails at `app.open()`.
+
+| Throws | When |
+| --- | --- |
+| `APP_NOT_OPEN` | No `app` was passed and none is pinned (no `app.bundleId`, build not installed yet). |
+
+#### `isAppInstalled`
+
+```ts
+/**
+ * Whether an app, by bundle id or package, is on the device, system apps
+ * included (Android: launchable apps only); without one, the pinned app.
+ */
+isAppInstalled(app?: string): Promise<boolean>;
+```
+
+```ts
+expect(await device.isAppInstalled('com.example.companion')).toBe(true);
+```
+
+- The app's display name, as the device lists it, matches too.
+
+| Throws | When |
+| --- | --- |
+| `APP_NOT_OPEN` | No `app` was passed and none is pinned. |
 
 #### `openApp`
 
