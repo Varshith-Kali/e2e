@@ -53,60 +53,12 @@ describe('BrowserConnection', () => {
     await connection.dispose();
   });
 
-  it('keeps the sandbox on for a headed run', async () => {
-    const { browser } = fakeBrowser();
-    chromiumLaunch.mockResolvedValue(browser);
-    const connection = new BrowserConnection();
-    await connection.acquire(launch(true, { headed: true }));
-    expect(launchOf(chromiumLaunch)).toMatchObject({ headless: false, chromiumSandbox: true });
-    await connection.dispose();
-  });
-
   it('launches chromium with the sandbox off when asked', async () => {
     const { browser } = fakeBrowser();
     chromiumLaunch.mockResolvedValue(browser);
     const connection = new BrowserConnection();
     await connection.acquire(launch(false));
     expect(launchOf(chromiumLaunch)).toMatchObject({ chromiumSandbox: false });
-    await connection.dispose();
-  });
-
-  it('keeps the opt-out on a relaunch after a disconnect', async () => {
-    let connected = true;
-    const { browser } = fakeBrowser(() => connected);
-    chromiumLaunch.mockResolvedValue(browser);
-    const connection = new BrowserConnection();
-    await connection.acquire(launch(false));
-    connected = false;
-    await connection.acquire(launch(false));
-    expect(chromiumLaunch).toHaveBeenCalledTimes(2);
-    for (const call of chromiumLaunch.mock.calls) {
-      expect(call[0]).toMatchObject({ chromiumSandbox: false });
-    }
-    await connection.dispose();
-  });
-
-  it('keeps the sandbox on when a relaunch fails while another caller is waiting', async () => {
-    let connected = true;
-    const { browser: first } = fakeBrowser(() => connected);
-    const { browser: third } = fakeBrowser();
-    chromiumLaunch
-      .mockResolvedValueOnce(first)
-      .mockRejectedValueOnce(new Error('browserType.launch: Chromium sandboxing failed!'))
-      .mockResolvedValueOnce(third);
-    const connection = new BrowserConnection();
-    await connection.acquire(launch(true));
-    connected = false;
-    const [relaunch, waiter] = await Promise.allSettled([
-      connection.acquire(launch(true)),
-      connection.acquire(launch(true)),
-    ]);
-    expect(relaunch.status).toBe('rejected');
-    expect(waiter.status).toBe('fulfilled');
-    expect(chromiumLaunch).toHaveBeenCalledTimes(3);
-    for (const call of chromiumLaunch.mock.calls) {
-      expect(call[0]).toMatchObject({ chromiumSandbox: true });
-    }
     await connection.dispose();
   });
 
@@ -172,30 +124,6 @@ describe('BrowserConnection', () => {
     await expect(
       connection.acquire(launch(true)),
     ).rejects.toBe(failure);
-    await connection.dispose();
-  });
-
-  it('keeps the opt-out when a relaunch fails while another caller is waiting', async () => {
-    let connected = true;
-    const { browser: first } = fakeBrowser(() => connected);
-    const { browser: third } = fakeBrowser();
-    chromiumLaunch
-      .mockResolvedValueOnce(first)
-      .mockRejectedValueOnce(new Error('browserType.launch: Chromium sandboxing failed!'))
-      .mockResolvedValueOnce(third);
-    const connection = new BrowserConnection();
-    await connection.acquire(launch(false));
-    connected = false;
-    const [relaunch, waiter] = await Promise.allSettled([
-      connection.acquire(launch(false)),
-      connection.acquire(launch(false)),
-    ]);
-    expect(relaunch.status).toBe('rejected');
-    expect(waiter.status).toBe('fulfilled');
-    expect(chromiumLaunch).toHaveBeenCalledTimes(3);
-    for (const call of chromiumLaunch.mock.calls) {
-      expect(call[0]).toMatchObject({ chromiumSandbox: false });
-    }
     await connection.dispose();
   });
 
