@@ -509,7 +509,10 @@ before writing the AI trace.
   https://e2e.com/docs/tools#read-a-nodes-computed-style.
 - `createToolLoopExecutor` keeps the loop and replaces prompt and tool
   vocabulary; spread `createGrammarTools(ctx, { guard })` into its tools and
-  start its `system` with `BASE_RULES` to keep the built-in actions.
+  start its `system` with `BASE_RULES` to keep the built-in actions. A
+  `complete_step` sent in the same turn as other calls waits for the calls
+  before it, and is refused when one failed or the last one changed
+  nothing; calls after it don't run.
 - Any `StepExecutor` (`{ name, version?, cache?, runStep(ctx) }`) goes under
   `executor`; the runner still owns observations, actions, budgets, and the
   report, and `system` or `tools` beside `executor` is `INVALID_CONFIG`.
