@@ -15,7 +15,7 @@
 import { z } from 'zod';
 import { loadAiSdkIfInstalled } from '@e2e-dev/core/lib/agent/ai-sdk';
 import { openInteractiveStep, type InteractiveStep } from '../agent/interactive-step.ts';
-import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
+import type { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import type { ResolvedConfig, ResolvedTarget } from '@e2e-dev/core/lib/config/resolve';
 import { launchesPinnedApp } from '@e2e-dev/core/lib/config/targets';
 import { classifyError, ConfigurationError, errorMessage, InfrastructureError, type SerializedError } from '@e2e-dev/core/lib/internal/errors';
@@ -31,6 +31,7 @@ import { openStandaloneAttempt, type OneShotAttempt } from '../run/standalone-ki
 import type { StandaloneAttempt } from '@e2e-dev/core/lib/run/standalone-attempt';
 import { selectStandaloneTest, testLocation } from '../run/standalone-test.ts';
 import { createSessionCatalog, isGrammarVerb, type SessionCatalog } from '../session-tools/catalog.ts';
+import { createSessionScreenPresenter } from '../session-tools/screen.ts';
 import { sessionFills, sessionSecretLines, sessionSecretParams } from '../session-tools/secrets.ts';
 import { appLines } from './app-lines.ts';
 import { SESSION_BOUNDS } from '../session-tools/bounds.ts';
@@ -49,14 +50,6 @@ const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** How long the attempt outlives its step, so a step that hit the TTL is still closed in order. */
 const CLOSE_GRACE_MS = 60 * 1000;
 const SESSION_INSTRUCTION = 'Interactive session: a coding agent drives the app over MCP.';
-
-/**
- * The session's screen presenter, with folding on: the session is the one
- * caller that turns it on.
- */
-export function createSessionScreenPresenter(): ScreenPresenter {
-  return new ScreenPresenter({ foldUnchangedSubtrees: true });
-}
 
 /** Where an agent reads how to write a test, said in the server's instructions and every session's opening. */
 export const READ_WRITING_GUIDE = 'Before you write or edit a test, read the writing-tests guide: the resource e2e://guide/writing-tests, or npx e2e guide writing-tests in a shell.';

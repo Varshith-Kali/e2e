@@ -7,7 +7,7 @@ import { createGrammarTools } from '@e2e-dev/core/lib/agent/primitives';
 import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { TestError } from '@e2e-dev/core/lib/internal/errors';
 import { createSessionCatalog } from '../../src/session-tools/catalog.ts';
-import { createSessionScreenPresenter } from '../../src/mcp/session.ts';
+import { createSessionScreenPresenter } from '../../src/session-tools/screen.ts';
 import { catalogLine, describeToolDetail, errorResult, invokeTool, resultFromOutput, toolJsonSchema, type McpToolResult } from '../../src/session-tools/tools.ts';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
 
@@ -243,7 +243,7 @@ describe('session catalog folding', () => {
     const { context } = fakeExecutorContext();
     const observations = [observation('b1', mainList), observation('b2', mainDetails), observation('b2', mainDetails)];
     let calls = 0;
-    // The session's presenter, as open_session builds it: the one caller that turns folding on.
+    // The shared session presenter: the one both session kinds build, with folding on.
     const scripted: StepExecutorContext = {
       ...context,
       observe: (async () => observations[Math.min(calls++, observations.length - 1)]!) as StepExecutorContext['observe'],

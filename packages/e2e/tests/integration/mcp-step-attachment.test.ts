@@ -94,6 +94,54 @@ const projects: FixtureProject[] = [];
 const runs: ReturnType<typeof spawn>[] = [];
 const clients: Client[] = [];
 
+/** A project whose screen is a 12-link sidebar beside a main that swaps on tap, for the fold check. */
+const FOLD_CONFIG = `import { createFakeEngine, FAKE_APP } from '../../helpers/fake-engine.ts';
+
+const { engine } = createFakeEngine({
+  scene: () => {
+    const main = {
+      id: 'main', role: 'main', name: 'Order list',
+      children: [
+        {
+          id: 'order1', role: 'button', name: 'Order 1',
+          on(action) {
+            if (action.kind !== 'tap') return;
+            main.name = 'Order details';
+            main.children = [
+              { id: 'order42', role: 'heading', name: 'Order 42' },
+              { id: 'total', role: 'text', name: 'Total $12' },
+              { id: 'placed', role: 'text', name: 'Placed yesterday' },
+              { id: 'address', role: 'text', name: 'Ship to 12 Main Street' },
+              { id: 'method', role: 'text', name: 'Standard delivery' },
+              { id: 'refund', role: 'button', name: 'Refund' },
+              { id: 'ship', role: 'button', name: 'Ship' },
+              { id: 'invoice', role: 'button', name: 'Invoice' },
+              { id: 'receipt', role: 'text', name: 'Email receipt sent' },
+              { id: 'phone', role: 'text', name: 'Phone 555 0100' },
+              { id: 'gift', role: 'text', name: 'Gift message included' },
+              { id: 'tracking', role: 'text', name: 'Tracking 1Z999' },
+            ];
+          },
+        },
+        { id: 'order2', role: 'button', name: 'Order 2' },
+      ],
+    };
+    return [
+      {
+        id: 'sidebar', role: 'navigation', name: 'Sidebar',
+        children: Array.from({ length: 12 }, (_, i) => ({ id: 'item' + (i + 1), role: 'link', name: 'Item ' + (i + 1) })),
+      },
+      main,
+    ];
+  },
+});
+
+export default {
+  targets: [{ name: 'fake', platform: 'fake', engine, app: FAKE_APP }],
+  workers: 1,
+};
+`;
+
 /** Writes a test that opens its app before the given statements run. */
 function project(body: string, config = CONFIG): string {
   const created = createProject({
@@ -229,6 +277,32 @@ describe('MCP attachments to held tests', { timeout: 60_000 }, () => {
     expect(tapped.isError, tapped.text).toBe(false);
     expect(tapped.text).toContain('Submitted');
     expect((await invoke(client, 'call', { tool: 'test_lines' })).text).toContain('.tap()');
+    expect(e2e(dir, 'run', '--step', 'next').status).toBe(0);
+    expect(await held.exited).toBe(0);
+  });
+
+  it('folds the unchanged sidebar in an attached session tap result', async () => {
+    const dir = project('await screen.pause();', FOLD_CONFIG);
+    const held = await pause(dir);
+    const { client } = await mcp(dir);
+    const opened = await openSession(client, { attach: held.id });
+    expect(opened.text).toContain('Item 1');
+    expect(opened.text).toContain('Item 12');
+
+    const observed = await invoke(client, 'call', { tool: 'observe' });
+    expect(observed.isError, observed.text).toBe(false);
+    expect(observed.text).toContain('Item 12');
+    const target = /^[ \t]*#(\S+) button "Order 1"/m.exec(observed.text)?.[1];
+
+    if (target === undefined) {
+      throw new Error(observed.text);
+    }
+
+    const tapped = await invoke(client, 'call', { tool: 'tap', args: { target } });
+    expect(tapped.isError, tapped.text).toBe(false);
+    expect(tapped.text).toContain('Order 42');
+    expect(tapped.text).toContain('nodes inside, same as revision');
+    expect(tapped.text).not.toContain('Item 1');
     expect(e2e(dir, 'run', '--step', 'next').status).toBe(0);
     expect(await held.exited).toBe(0);
   });

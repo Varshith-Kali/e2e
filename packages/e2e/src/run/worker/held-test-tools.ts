@@ -7,7 +7,7 @@ import type { StepExecutorContext } from '@e2e-dev/core/lib/agent/executor';
 import type { AgentContext } from '@e2e-dev/core/lib/agent/invocation';
 import { OperationQueue } from '@e2e-dev/core/lib/agent/operation-queue';
 import { executorRedactors } from '@e2e-dev/core/lib/agent/redaction';
-import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
+import type { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import { createStepExecution } from '@e2e-dev/core/lib/agent/step-execution';
 import type { ResolvedTarget } from '@e2e-dev/core/lib/config/resolve';
 import { classifyError, ConfigurationError, errorMessage, InfrastructureError } from '@e2e-dev/core/lib/internal/errors';
@@ -21,6 +21,7 @@ import { sessionRecordings } from '@e2e-dev/core/lib/run/recordings';
 import { StepRecorder } from '@e2e-dev/core/lib/run/steps';
 import type { SessionCatalog } from '../../session-tools/catalog.ts';
 import type { SessionRecorder } from '../../session-tools/recording.ts';
+import { createSessionScreenPresenter } from '../../session-tools/screen.ts';
 import { actionResult, catalogLine, describeToolDetail, errorResult, invokeTool, redactResult, unavailableSessionTool } from '../../session-tools/tools.ts';
 import { sessionFills, sessionSecretLines, sessionSecretParams } from '../../session-tools/secrets.ts';
 import { heldTestToolCallScope } from './held-test-tool-scope.ts';
@@ -148,7 +149,7 @@ export class HeldTestTools {
     const { attempt, redact, target } = this.runtime;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, attempt.signal]);
-    const screen = new ScreenPresenter();
+    const screen = createSessionScreenPresenter();
 
     const attachment: Attachment = {
       id: requestId,
